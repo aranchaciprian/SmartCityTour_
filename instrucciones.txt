@@ -1,0 +1,95 @@
+﻿Instrucciones para el despliegue de la aplicación desde 0
+
+Abres anaconda prompt y luego vas ejecutando línea por línea:
+conda create -n turismo python=3.11
+conda activate turismo
+python -m pip install --upgrade pip
+cd ruta
+pip install -r requirements.txt
+cd ruta\smartcitytour\scripts
+python mapa_madrid.py
+cd .. 
+python app.py
+flask run
+
+#######################################################
+
+Instrucciones para subir cambios al git 
+
+cd ruta_donde_queramos_guardar_la_carpeta
+git clone https://github.com/AnteaCabanellas/smartcitytour.git
+LUEGO MODIFICAMOS LO QUE SEA DE LA CARPETA
+cd smartcitytour
+git checkout -b nombre_rama
+git status
+git add -A
+git status
+git commit -m "escribimos_que_hemos_cambiado"
+git push origina nombre_rama
+
+###########################################################
+INSTRUCCIONES NUEVAS CON RENDER
+Primer arranque “de cero”
+cd C:\ruta\smartcitytour
+conda create --name turismo python=3.10 -y
+conda activate turismo
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+conda env config vars set FLASK_APP=app FLASK_DEBUG=1 DATASET_TUI=data/BBDD_TUI.csv
+conda deactivate & conda activate turismo
+
+flask --app app db migrate -m "schema update"
+flask --app app db upgrade
+
+python scripts\load_tui.py
+python scripts\mapa_madrid.py
+flask --app app --debug run
+
+Arranque del día a día (sin cambios de modelos/datos)
+cd C:\ruta\smartcitytour
+conda activate turismo
+flask --app app --debug run
+
+
+Si cambiaste models.py
+conda activate turismo
+flask --app app db migrate -m "update schema"
+flask --app app db upgrade
+Si cambiaste el CSV o los scripts de datos/mapa
+conda activate turismo
+python scripts\load_tui.py
+python scripts\mapa_madrid.py
+
+###########################################################
+
+
+GUIA PARA INSTALAR PostgreSQL en WINDOWS POWERSHELL
+
+winget source update
+winget search postgresql
+winget install -e --id PostgreSQL.PostgreSQL.17
+$env:Path += ";C:\Program Files\PostgreSQL\17\bin"
+psql --version
+psql "postgresql://smart_user:JfDFCcdRrilfQCx9eVtEdsCralEFJDoF@dpg-d2tcmuvfte5s73a3ueh0-a.frankfurt-postgres.render.com/smartcitytour"
+
+UNA VEZ INSTALADO, solo abrir WINDOWS POWERSHELL y:
+$env:Path += ";C:\Program Files\PostgreSQL\17\bin"
+psql --version
+psql "postgresql://smart_user:JfDFCcdRrilfQCx9eVtEdsCralEFJDoF@dpg-d2tcmuvfte5s73a3ueh0-a.frankfurt-postgres.render.com/smartcitytour"
+
+
+\conninfo
+\dt
+\d+ usuarios
+\d+ tui
+\d+ favoritos
+SELECT COUNT(*) FROM usuarios;
+SELECT COUNT(*) FROM tui;
+SELECT COUNT(*) FROM favoritos;
+
+\copy usuarios   TO 'C:/Users/Arancha/Downloads/usuarios.csv'   WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+\copy tui        TO 'C:/Users/Arancha/Downloads/tui.csv'        WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+\copy favoritos  TO 'C:/Users/Arancha/Downloads/favoritos.csv'  WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+
+###########################################################
+

@@ -1,0 +1,28 @@
+# --- Web / servidor ---
+Flask>=2.3,<3.0
+gunicorn>=21.2
+
+# --- BD / ORM ---
+SQLAlchemy>=2.0,<3.0
+Flask-SQLAlchemy>=3.1,<4.0
+Flask-Migrate>=4.0,<5.0
+psycopg2-binary>=2.9,<3.0   # cliente PostgreSQL
+
+# --- Autenticación ---
+Flask-Login>=0.6,<1.0
+
+# --- Datos / tiempos ---
+pandas>=2.2,<2.3
+pytz>=2024.1
+python-dotenv>=1.0
+
+# --- OpenAI SDK (nuevo: "from openai import OpenAI") ---
+openai>=1.30.0,<2.0.0
+
+# --- Generación del mapa (scripts/make_map_madrid.py) ---
+folium>=0.15
+tqdm>=4.66
+geopy>=2.4
+ratelimit>=2.2
+
+
