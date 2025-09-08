@@ -1,0 +1,73 @@
+name: Rebuild Map
+
+permissions:
+  contents: write   # habilita push cuando toque (en ramas ≠ main)
+
+on:
+  push:
+    branches:
+      - '**'   # se ejecuta en cualquier rama (incluida main)
+    paths:
+      - 'data/BBDD_TUI.csv'
+      - 'scripts/**'
+      - 'templates/**'
+      - 'app.py'
+      - '.github/workflows/mapa.yml'
+  workflow_dispatch: {}   # permite lanzarlo manualmente
+
+concurrency:
+  group: map-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-map:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # para detectar cambios del CSV comparando con el commit anterior
+
+      - name: Detect if CSV changed in this push
+        id: changed_csv
+        shell: bash
+        run: |
+          set -eo pipefail
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            CHANGED=$(git diff --name-only HEAD~1 HEAD | grep -c '^data/BBDD_TUI.csv$' || true)
+          else
+            CHANGED=$(git show --name-only --pretty="" | grep -c '^data/BBDD_TUI.csv$' || true)
+          fi
+          if [ "$CHANGED" -gt 0 ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install deps for map generator
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate map HTML
+        run: |
+          python scripts/mapa_madrid.py
+
+      # 🔑 Cambios CLAVE:
+      # - Antes: hacías commit si CHANGED == true (lo que iba bien, pero en main creaba un segundo push tras el merge)
+      # - Ahora: SOLO commit/push si cambió el CSV *y* NO estamos en main
+      - name: Commit updated map (only when CSV changed, and not on main)
+        if: ${{ steps.changed_csv.outputs.changed == 'true' && github.ref != 'refs/heads/main' }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add static/mapa/mapa_madrid.html
+          git commit -m "CI: update mapa_madrid.html" || echo "No changes"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git push
