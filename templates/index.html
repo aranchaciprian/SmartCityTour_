@@ -5,153 +5,190 @@
   <title>Smart City Tour — Mapa + Chat</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    /* ---------------- Launcher & Iframe (widget) ---------------- */
+    /* ---------------- Layout base ---------------- */
     html, body {
       margin: 0;
       padding: 0;
       height: 100%;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;
+      overflow: hidden; /* ← elimina el micro‑scroll que causa 1px blanco */
     }
-
-    /* Mapa */
-    #mapa {
-      width: 100%;
-      height: calc(100vh - var(--footer-h));
-      border: none;
-      display: block;
-    }
-
-    /* Botón flotante del chat */
     :root {
       --sct-blue:  #2563eb;
       --sct-blue2: #3b82f6;
       --sct-green: #22c55e;
-      --footer-h: 56px;
+      --footer-h: 0px;
+      --header-h: 48px;  /* ← más compacto */
     }
+
+    /* ---------------- Header (menú superior) ---------------- */
+   :root {
+  --sct-blue:  #2563eb;
+  --sct-blue2: #3b82f6;
+  --sct-green: #22c55e;
+  --footer-h: 0px;
+  --header-h: 48px;  /* ← más compacto */
+}
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 99990;
+      height: var(--header-h);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 6px 14px;
+      background: rgba(255, 255, 255, 0.85); /* ← más transparente */
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    }
+
+    .topbar__brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .topbar__logo {
+      height: 22px;    /* ← más pequeño */
+      width: auto;
+      display: block;
+    }
+
+    .topbar__title {
+      font-weight: 600;    /* ← más liviano */
+      letter-spacing: .3px;
+      font-size: 16px;
+      white-space: nowrap;
+      color: #1f2937;
+    }
+
+    .topbar__spacer { flex: 1 }
+
+    .topbar__user {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      color: #111827;
+    }
+
+    .topbar__hello {
+      white-space: nowrap;
+      max-width: 40vw;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: .9;
+    }
+
+    .topbar__logout {
+      border: 1px solid rgba(0,0,0,0.12);
+      background: #fff;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      text-decoration: none;
+      color: #111827;
+    }
+    .topbar__logout:hover { background:#f3f4f6 }
+
+
+    /* ---------------- Mapa ---------------- */
+    #mapa {
+      width: 100%;
+      height: calc(100dvh - var(--header-h)); /* ← ocupa todo menos el header */
+      border: 0;       /* ← sin borde */
+      display: block;  /* ← evita gaps por inline spacing */
+    }
+
+    /* ---------------- Botón flotante del chat ---------------- */
     #sct-launcher {
       position: fixed;
       right: 24px;
-      bottom: calc(24px + var(--footer-h));
-      z-index: 99998;
-      width: 64px;
-      height: 64px;
-      border-radius: 50%;
-      border: none;
-      cursor: pointer;
-      color: #fff;
+      bottom: 24px; /* ← ya no depende del footer */
+      z-index: 100001; /* por encima del chat para que siempre sea clicable */
+      width: 64px; height: 64px; border-radius: 50%;
+      border: none; cursor: pointer; color: #fff;
       background: radial-gradient(120% 120% at 70% 20%, var(--sct-blue2) 0%, var(--sct-blue) 60%);
       box-shadow: 0 18px 38px rgba(0,0,0,.28), inset 0 2px 8px rgba(255,255,255,.12);
-      display: grid;
-      place-items: center;
+      display: grid; place-items: center;
       transition: transform .15s ease, filter .15s ease, box-shadow .2s ease;
     }
     #sct-launcher:hover{ filter:brightness(1.08); }
     #sct-launcher:active{ transform: translateY(1px) scale(.98); }
     #sct-launcher svg{ display:block; }
-
-    /* halo sutil */
     #sct-launcher::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
-      border-radius: inherit;
+      content: ""; position: absolute; inset: -6px; border-radius: inherit;
       background: radial-gradient(60% 60% at 50% 50%, rgba(34,197,94,.18), transparent 70%);
-      opacity: .7;
-      filter: blur(6px);
-      pointer-events: none;
+      opacity: .7; filter: blur(6px); pointer-events: none;
     }
-
-    /* Rebote al abrir */
     @keyframes sct-bounce-in{
-      0%   { transform: translateY(12px) scale(.85); box-shadow: 0 12px 28px rgba(0,0,0,.22); }
-      55%  { transform: translateY(-6px) scale(1.04); }
-      80%  { transform: translateY(2px)  scale(.99); }
-      100% { transform: translateY(0)    scale(1); }
+      0%{ transform: translateY(12px) scale(.85); box-shadow: 0 12px 28px rgba(0,0,0,.22); }
+      55%{ transform: translateY(-6px) scale(1.04); }
+      80%{ transform: translateY(2px) scale(.99); }
+      100%{ transform: translateY(0) scale(1); }
     }
     #sct-launcher.rebote{ animation: sct-bounce-in .5s cubic-bezier(.2,.8,.2,1); }
-
-    /* Ventana del chat */
-    #sct-frame {
-      position: fixed;
-      right: 24px;
-      bottom: calc(104px + var(--footer-h));
-      z-index: 99999;
-      width: 860px;
-      height: 82vh;
-      border: 0;
-      border-radius: 20px;
-      box-shadow: 0 14px 44px rgba(0,0,0,.35);
-      display: none;
-      background: transparent;
-    }
-
-    @media (max-width: 920px) {
-      #sct-frame {
-        left: 4vw;
-        right: 4vw;
-        width: auto;
-        height: 82vh;
-        bottom: calc(96px + var(--footer-h));
-      }
-    }
     @media (prefers-reduced-motion: reduce){
       #sct-launcher{ transition:none }
       #sct-launcher.rebote{ animation:none }
     }
-    /* Banner fijo inferior */
-    .sct-footer {
+
+    /* ---------------- Ventana del chat ---------------- */
+    #sct-frame {
       position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      height: var(--footer-h);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      background: rgba(255, 255, 255, 0.92);
-      backdrop-filter: blur(6px);
-      border-top: 1px solid rgba(0,0,0,0.08);
-      box-shadow: 0 -4px 16px rgba(0,0,0,0.06);
-      z-index: 99997; /* por debajo del botón (99998) y del frame (99999) */
-      padding: 8px 12px;
+      right: 24px;
+      bottom: 24px;       /* ← ya no depende del footer */
+      z-index: 100000;    /* ← por encima del header (99990) */
+      width: 860px; height: 82vh;
+      border: 0; border-radius: 20px;
+      box-shadow: 0 14px 44px rgba(0,0,0,.35);
+      display: none; background: transparent;
     }
-    
-    .sct-footer__logo {
-      height: 28px;  /* ajusta según tu imagen */
-      width: auto;
-      display: block;
-      margin-right: 12px;
+    @media (max-width: 920px) {
+      #sct-frame {
+        left: 4vw; right: 4vw; width: auto; height: 82vh; bottom: 24px;
+      }
     }
-
-    .sct-footer__text {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;
-      font-weight: 700;
-      font-size: 16px;     /* ↑ era 14px */
-      line-height: 1.05;   /* compacto, no crece el banner */
-      letter-spacing: 0.3px;
-      color: #1f2937;
-      white-space: nowrap;
-    }
-
-    @media (max-width: 480px) {
-      :root { --footer-h: 50px; }
-      .sct-footer__text { font-size: 15px; }
-      .sct-footer__logo { height: 24px; }
-    }
-
   </style>
 </head>
 <body>
 
-  <!-- 1) Mapa regenerado automáticamente por el script -->
+  <!-- Menú superior -->
+<header class="topbar" role="banner">
+  <div class="topbar__brand">
+    <img class="topbar__logo" src="{{ url_for('static', filename='img/TUI_logo.png', v=build_version) }}" alt="TUI" />
+    <div class="topbar__title">Smart City Tour</div>
+  </div>
+  <div class="topbar__spacer"></div>
+  <div class="topbar__user">
+    <span class="topbar__hello">
+      {% if current_user.is_authenticated %}
+        Hola, <strong>{{ current_user.username }}</strong>
+      {% else %}
+        Invitado
+      {% endif %}
+    </span>
+    {% if current_user.is_authenticated %}
+      <a class="topbar__logout" href="{{ url_for('logout') }}">Cerrar sesión</a>
+    {% else %}
+      <a class="topbar__logout" href="{{ url_for('login') }}">Iniciar sesión</a>
+    {% endif %}
+  </div>
+</header>
+
+
+  <!-- 1) Mapa -->
   <iframe id="mapa"
     src="{{ url_for('static', filename='mapa/mapa_madrid.html', v=build_version) }}"
     title="Mapa interactivo de Madrid"></iframe>
 
   <!-- 2) Botón flotante del chat -->
   <button id="sct-launcher" aria-label="Abrir chat" title="Abrir chat">
-    <!-- Icono de burbuja -->
     <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true">
       <path fill="currentColor"
         d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9.8l-3.9 3a1 1 0 0 1-1.6-.8V17H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/>
@@ -159,22 +196,21 @@
   </button>
 
   <!-- 3) Chat en iframe -->
-<iframe
-  id="sct-frame"
-  src="{{ url_for('widget') }}"
-  title="Smart City Tour"
-  loading="lazy"
-  allow="geolocation"
-></iframe>
+  <iframe
+    id="sct-frame"
+    src="{{ url_for('widget') }}"
+    title="Smart City Tour"
+    loading="lazy"
+    allow="geolocation"
+  ></iframe>
 
-  <!-- 4) JS del launcher -->
+  <!-- JS del launcher -->
   <script>
-    const btn = document.getElementById('sct-launcher');
+    const btn   = document.getElementById('sct-launcher');
     const frame = document.getElementById('sct-frame');
     let open = false;
 
     const mapa = document.getElementById('mapa');
-
     const bubbleSVG = `
       <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true">
         <path fill="currentColor"
@@ -189,79 +225,49 @@
       btn.innerHTML = open ? '✖' : bubbleSVG;
 
       if (open){
-        btn.classList.remove('rebote'); // reinicia anim
-        void btn.offsetWidth;           // reflow
-        btn.classList.add('rebote');
+        btn.classList.remove('rebote'); void btn.offsetWidth; btn.classList.add('rebote');
         btn.addEventListener('animationend', () => btn.classList.remove('rebote'), { once:true });
       }
     }
 
     btn.addEventListener('click', toggleChat);
 
-    // Rebote inicial opcional al cargar:
     window.addEventListener('load', () => {
       btn.classList.add('rebote');
       btn.addEventListener('animationend', () => btn.classList.remove('rebote'), { once:true });
     });
 
-
-  window.addEventListener("message", async (ev) => {
-    const data = ev.data || {};
-    if (data.type === "SCT_SHOW_ON_MAP") {
-      try {
-        // 1) Minimizamos el chat si está abierto
-        if (open) toggleChat();
-
-        // 2) Buscamos place_ids + names de esa conversación (preferimos contexto por conversación)
-        let place_ids = [], names = [];
-        if (data.conversation_id) {
-          try {
-            const r1 = await fetch(`/api/conversation_place_ids/${encodeURIComponent(data.conversation_id)}`);
-            if (r1.ok) {
-              const j1 = await r1.json();
-              place_ids = Array.isArray(j1.place_ids) ? j1.place_ids : [];
-              names     = Array.isArray(j1.names)     ? j1.names     : [];
-            }
-          } catch {}
-        }
-
-        // 3) Si por lo que sea no vinieron, cogemos selección "viva"
-        if (!place_ids.length) {
-          try {
-            const r2 = await fetch(`/api/current_place_ids`);
-            if (r2.ok) {
-              const j2 = await r2.json();
-              place_ids = Array.isArray(j2.place_ids) ? j2.place_ids : [];
-               names     = Array.isArray(j2.names)     ? j2.names     : [];
-            }
-          } catch {}
-        }
-
-        // 4) Pasamos al mapa para que muestre el bloque "Chatbot"
-        mapa?.contentWindow?.postMessage({
-          type: "SCT_APPLY_CHAT_FILTER",
-          place_ids,
-          names
-        }, "*");
-      } catch (e) {
-        console.warn("SCT_SHOW_ON_MAP error:", e);
+    window.addEventListener("message", async (ev) => {
+      const data = ev.data || {};
+      if (data.type === "SCT_SHOW_ON_MAP") {
+        try {
+          if (open) toggleChat();
+          let place_ids = [], names = [];
+          if (data.conversation_id) {
+            try {
+              const r1 = await fetch(`/api/conversation_place_ids/${encodeURIComponent(data.conversation_id)}`);
+              if (r1.ok) {
+                const j1 = await r1.json();
+                place_ids = Array.isArray(j1.place_ids) ? j1.place_ids : [];
+                names     = Array.isArray(j1.names)     ? j1.names     : [];
+              }
+            } catch {}
+          }
+          if (!place_ids.length) {
+            try {
+              const r2 = await fetch(`/api/current_place_ids`);
+              if (r2.ok) {
+                const j2 = await r2.json();
+                place_ids = Array.isArray(j2.place_ids) ? j2.place_ids : [];
+                names     = Array.isArray(j2.names)     ? j2.names     : [];
+              }
+            } catch {}
+          }
+          mapa?.contentWindow?.postMessage({ type: "SCT_APPLY_CHAT_FILTER", place_ids, names }, "*");
+        } catch (e) { console.warn("SCT_SHOW_ON_MAP error:", e); }
       }
-    }
-  });
-
-
+    });
   </script>
 
-  <footer class="sct-footer" role="contentinfo" aria-label="Marca">
-    <img
-      class="sct-footer__logo"
-      src="{{ url_for('static', filename='img/TUI_logo.png', v=build_version) }}"
-      alt="TUI"
-      decoding="async"
-      loading="lazy"
-    />
-    <span class="sct-footer__text">Smart City Tour – Madrid</span>
-  </footer>
-  
 </body>
 </html>
