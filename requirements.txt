@@ -19,7 +19,7 @@ python-dotenv>=1.0
 # --- OpenAI SDK (nuevo: "from openai import OpenAI") ---
 openai>=1.30.0,<2.0.0
 
-# --- Generación del mapa (scripts/make_map_madrid.py) ---
+# --- Generación del mapa (scripts/mapa_madrid.py) ---
 folium>=0.15
 tqdm>=4.66
 geopy>=2.4
