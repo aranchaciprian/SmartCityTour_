@@ -5,6 +5,9 @@ Backend Flask para recomendaciones turísticas en Madrid.
 - Chat concurrente con LLM (plan solo si lo pides explícitamente).
 - Estado de place_ids para mapa **por conversación** (no global) y acumulado reciente.
 - Favoritos por usuario.
+- 👇 Mejoras:
+  * El LLM ahora recibe un historial compacto de la conversación y el último catálogo mostrado
+    para entender referencias (“la segunda”, “el museo”, etc.) y profundizar en temas ya citados.
 """
 
 # ======================
@@ -776,12 +779,13 @@ def _conv_recent_ids(conv_id: str) -> List[str]:
     with CONV_LOCK:
         return list(dict.fromkeys(list(st["place_ids_recent"])))
 
+
 def _conv_set_catalog(conv_id: str, rows: List[Dict[str, Any]]) -> None:
     """Guarda el catálogo del último output (sirve para follow-ups)."""
     st = _conv_get(conv_id)
     items = []
     for i, r in enumerate(rows, start=1):
-        nombre = r.get("nombre", "") or ""
+        nombre = r.get("nombre") or r.get("name") or ""
         pid = (r.get("place_id") or "").strip()
         lat = r.get("lat")
         lon = r.get("lon")
@@ -808,6 +812,46 @@ def _cleanup_conv_state(ttl_seconds: int = 2 * 24 * 3600):
         expired = [cid for cid, st in CONV_STATE.items() if now_ts - st.get("ts", now_ts) > ttl_seconds]
         for cid in expired:
             CONV_STATE.pop(cid, None)
+
+
+# === NUEVO: helpers de memoria conversacional para el LLM ===
+def _clip(s: str, max_chars: int = 1400) -> str:
+    s = (s or "").strip()
+    return (s[: max_chars - 3] + "...") if len(s) > max_chars else s
+
+def _compact_history(messages: List[Dict[str, str]], max_turns: int = 12, max_chars: int = 1800) -> str:
+    """
+    Devuelve una versión compacta (user/assistant) de los últimos turnos.
+    Sin NLP costoso: solo limpia, etiqueta por rol y recorta.
+    """
+    hist = []
+    for m in messages[-max_turns:]:
+        role = m.get("role")
+        if role not in {"user", "assistant"}:
+            continue
+        content = (m.get("content") or "").strip()
+        if not content:
+            continue
+        prefix = "U:" if role == "user" else "A:"
+        hist.append(f"{prefix} {content}")
+    return _clip("\n".join(hist), max_chars)
+
+def _catalog_for_coref(conv_id: str) -> List[Dict[str, Any]]:
+    """
+    Último catálogo mostrado para resolver referencias tipo 'la segunda', 'el del parque', etc.
+    Devuelve estructura ligera: idx, nombre, place_id, lat, lon.
+    """
+    items = _conv_get_catalog(conv_id)
+    out = []
+    for it in items[:12]:
+        out.append({
+            "idx": it.get("idx"),
+            "nombre": it.get("name"),
+            "place_id": it.get("place_id"),
+            "lat": it.get("lat"),
+            "lon": it.get("lon"),
+        })
+    return out
 
 
 # ======================
@@ -940,7 +984,7 @@ def index():
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    """Endpoint principal del chat (plan/info concurrente)."""
+    """Endpoint principal del chat (plan/info concurrente + comprensión del historial)."""
     data = request.get_json()
     messages = data.get("messages")
     if not messages:
@@ -1045,22 +1089,14 @@ def chat():
         )
 
     # === Publicación de place_ids para el front ===
-    # Regla pedida: mismos ids que mostramos en el chat y sin duplicados.
-    # - Si used_csv: publicamos EXACTAMENTE los place_ids de csv_context (en orden).
-    # - Si no: publicamos lista vacía (no inventamos IDs).
     def _extract_unique_pids(ctx_list: List[Dict[str, Any]]) -> List[str]:
         pids = [ (item.get("place_id") or "").strip() for item in ctx_list ]
         pids = [p for p in pids if p]
         return _ordered_unique(pids)
 
     if used_csv:
-        # limitamos los ids al tamaño real del contexto (que es lo que ve el usuario)
         place_ids_for_map = _extract_unique_pids(csv_context)
-        # Asegurar que la longitud coincide con elementos del chat:
-        # Si hay menos IDs (porque algún item no tenía place_id), no se "rellena".
-        # El front mostrará ese mismo número en el mapa.
         _conv_publish_map_ids(conversation_id, place_ids_for_map)
-        # Además guarda nombres para UI si lo necesitas
         LAST_PLAN[conversation_id] = {
             "place_ids": list(place_ids_for_map),
             "names": [c["nombre"] for c in csv_context][:len(place_ids_for_map)],
@@ -1069,8 +1105,22 @@ def chat():
     else:
         _conv_publish_map_ids(conversation_id, [])  # sin CSV no publicamos IDs
 
-    # 5) Prompt reforzado (detalle uniforme y chat concurrente)
+    # 4) Catálogo para concurrencia (sirva haya CSV o no)
+    catalog_rows = []
+    for r in csv_context:
+        catalog_rows.append({
+            "nombre": r.get("nombre",""),
+            "place_id": r.get("place_id","") or "",
+            "lat": r.get("lat"),
+            "lon": r.get("lon"),
+        })
+    _conv_set_catalog(conversation_id, catalog_rows)
+
+    # 5) Prompt reforzado (detalle uniforme y comprensión del historial)
+    user_name = current_user.username if current_user and current_user.is_authenticated else ""
+
     overview_intro = (
+        f"Hola **{user_name}** 👋\n"
         "Vista general narrativa y conversacional para Madrid:\n"
         "- Recomienda una época del año y comenta brevemente la temporada actual (clima/afluencia).\n"
         "- Overview con 2–3 frases por lugar (prioriza los del CSV; puedes añadir 1–2 sugerencias genéricas si faltan).\n"
@@ -1082,6 +1132,10 @@ def chat():
         "- Tono cálido y cercano, estilo guía local.\n"
     )
 
+    # === NUEVO: historial compacto + catálogo reciente ===
+    historial_compacto = _compact_history(messages, max_turns=12, max_chars=1800)
+    catalogo_coref = _catalog_for_coref(conversation_id)
+
     system = (
         "Eres un asistente turístico local de Madrid. Objetivo: responder con precisión y mantener **concurrencia de chat**.\n"
         "- Usa PRIMERO los lugares del CSV si son coherentes con la consulta; si no, responde con conocimiento general sin mencionar el CSV.\n"
@@ -1090,6 +1144,12 @@ def chat():
         "1) Genera un **PLAN** solo si el mensaje ACTUAL contiene sinónimos de plan (plan, itinerario, ruta, agenda, programa, planning, cronograma, schedule, tour, recorrido, itinerary, propuesta, timeline).\n"
         "2) Si el usuario hace un **follow‑up** (p. ej., “respecto a lo anterior”, “sobre lo anterior”, “lo de antes”) y NO pide plan explícitamente, responde en **modo INFO** (concurrente) sin crear un plan nuevo.\n"
         "3) Si pide **info general**, responde en modo INFO.\n\n"
+        "Comprensión del **contexto conversacional** (precisión):\n"
+        "- Recibirás `historial_compacto` con los últimos turnos y `catalogo_reciente` (ítems con `idx`, `nombre`, `place_id`).\n"
+        "- Si la consulta actual apunta a algo mencionado antes (por nombre, por `idx` del listado anterior, o por referencia ambigua tipo “el segundo”, “el del parque”, “el museo”), **resuelve la referencia** usando `catalogo_reciente` y responde sobre ese ítem concreto.\n"
+        "- Si hay ambigüedad entre varios ítems, **elige el más probable** según el historial y la intención; SOLO si la ambigüedad hace insegura la recomendación, formula **una única pregunta de desambiguación muy breve** y a la vez ofrece la **mejor respuesta provisional** con supuestos explícitos.\n"
+        "- Mantén la continuidad: respeta preferencias del usuario detectadas en el historial (horarios, presupuesto, zonas, accesibilidad, 'abierto ahora').\n"
+        "- Si el usuario pide 'más detalles' sobre algo ya mostrado, amplía con contexto útil (cómo llegar, mejores horas, tiempo típico en visita, alternativas cercanas, tips) sin repetir largos bloques ya dados.\n\n"
         "Formato y nivel de detalle (consistencia):\n"
         "- **PLAN**: 5–7 paradas; intervalos HH:MM–HH:MM; orden lógico; trayectos sugeridos (a pie/metro/bus con tiempos estimados). Cada parada debe tener el **mismo nivel de detalle** que en INFO: nombre, breve descripción, dirección, horario (o 'Horarios no disponibles; verifica la web oficial'), web oficial (WEBSITE) y enlace a mapa (URL), accesibilidad si está en CSV.\n"
         "- **INFO**: listado ≤10 con bullets y el mismo detalle de arriba.\n"
@@ -1100,17 +1160,6 @@ def chat():
         "- Iconografía: usa ⏰ 🎯 🗺️ 🌐 📞 🦽 🍽️ 🚇 🚌 🚶 💡 ✨ 💶 🌦️ cuando ayude a la lectura."
     )
 
-    # Catálogo para concurrencia (sirve haya CSV o no)
-    catalog_rows = []
-    for r in csv_context:
-        catalog_rows.append({
-            "nombre": r.get("nombre",""),
-            "place_id": r.get("place_id","") or "",
-            "lat": r.get("lat"),
-            "lon": r.get("lon"),
-        })
-    _conv_set_catalog(conversation_id, catalog_rows)
-
     user_block = {
         "modo": "overview" if bootstrap else "normal",
         "intent": intent,
@@ -1120,6 +1169,8 @@ def chat():
         "coords_usuario": f"{start_lat},{start_lon}"
         if (start_lat is not None and start_lon is not None)
         else None,
+        "historial_compacto": historial_compacto,   # <--- NUEVO
+        "catalogo_reciente": catalogo_coref,        # <--- NUEVO
         "contexto_csv": csv_context,
     }
 
