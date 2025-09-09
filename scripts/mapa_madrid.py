@@ -5,6 +5,8 @@ from tqdm import tqdm
 from geopy.geocoders import Nominatim
 from ratelimit import limits, sleep_and_retry
 import os
+import re
+from collections import Counter, defaultdict
 
 # ------------------------------------------------------------------
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # sube desde scripts/ al raíz
@@ -34,28 +36,32 @@ CAT2EMOJI = {
 
 grupos = {
     "TRANSPORTE": [
-        "Aeropuertos", "Estaciones De Autobús", "Estaciones De Metro", "Estaciones De Tren",
-        "Estación De Transporte", "Heliopuerto", "Parada De Taxis", "Pista De Aterrizaje"
+        "Estaciones De Autobús", "Estaciones De Metro", "Estaciones De Tren",
+        "Estación De Transporte", "Alquiler De Coches"
     ],
     "GASOLINERAS Y APARCAMIENTOS": [
-        "Aparcamientos", "Gasolineras"
+        "Aparcamientos", "Gasolineras", "Estación De Carga De Vehículos Eléctricos", "Lavadero De Coches",
+        "Aparcamiento Disuasorio", "Área De Servicio Para Camiones"
     ],
     "ALOJAMIENTOS": [
-        "Alojamiento", "B&B (Cama Y Desayuno)", "Cabaña De Camping", "Cabañas", "Campings",
-        "Casa De Huéspedes", "Complejo Residencial", "Edificio De Apartamentos",
+        "Alojamiento", "B&B (Cama Y Desayuno)", "Cabañas", "Campings",
+        "Casa De Huéspedes", "Edificio De Apartamentos",
         "Habitación De Huéspedes Privada", "Hostal", "Hotel De Larga Estancia",
-        "Hotel Resort", "Hoteles", "Posada", "Área Para Autocaravanas", "Moteles"
+        "Hotel Resort", "Hoteles", "Posada", "Área Para Autocaravanas", "Moteles",
+        "Complejo De Apartamentos", "Complejo De Condominios", "Parque De Casas Móviles"
     ],
     "ESPACIOS DEPORTIVOS": [
         "Campos De Golf", "Centro De Fitness", "Club Deportivo", "Coaching Deportivo",
         "Complejo Deportivo", "Estudio De Yoga", "Gimnasios", "Instalación Deportiva",
-        "Piscinas", "Saunas", "Zona De Senderismo"
+        "Piscinas", "Saunas", "Zona De Senderismo",
+        "Campo Deportivo", "Centro De Deportes De Aventura", "Pista De Hielo",
+        "Parque De Ciclismo", "Estación De Esquí", "Parque De Skate", "Estanque De Pesca"
     ],
     "OCIO NOCTURNO": [
         "Discotecas", "Pub"
     ],
     "ADMINISTRACIÓN PÚBLICA Y SEGURIDAD": [
-        "Ayuntamientos", "Oficina De Gobierno Local", "Oficina Gubernamental", "Policía"
+        "Ayuntamientos", "Oficina De Gobierno Local", "Oficina Gubernamental", "Policía", "Marina", "Embajada", "Subunidad"
     ],
     "COMIDA Y BEBIDA": [
         "Asador", "Bar De Vinos", "Bar Y Parrilla", "Bares", "Bocatería", "Cafetería Americana",
@@ -70,10 +76,11 @@ grupos = {
         "Restaurante Libanés", "Restaurante Mediterráneo", "Restaurante Mexicano",
         "Restaurante Tailandés", "Restaurante Turco", "Restaurante Vegano",
         "Restaurante Vegetariano", "Restaurante Vietnamita", "Restaurantes",
-        "Panaderías", "Pastelerías", "Patio De Comidas", "Pizzería", "Marisquerías", "Salón De Té"
+        "Panaderías", "Pastelerías", "Patio De Comidas", "Pizzería", "Marisquerías", "Salón De Té",
+        "Cibercafé", "Restaurante De Postres"
     ],
     "ESPACIOS RELIGIOSOS": [
-        "Iglesias", "Lugar De Culto", "Mezquitas", "Sinagogas"
+        "Iglesias", "Lugar De Culto", "Mezquitas", "Cementerio", "Templo Hindú"
     ],
     "TIENDAS DE COMIDA": [
         "Carnicerías", "Charcuterías", "Mercados", "Mayorista", "Supermercado Asiático", "Supermercados"
@@ -86,34 +93,35 @@ grupos = {
         "Tienda De Licores", "Tienda De Mascotas", "Tienda De Muebles", "Tienda De Móviles",
         "Tienda De Regalos", "Tienda De Repuestos", "Tienda De Ropa", "Tienda De Zumos",
         "Tiendas", "Zapaterías", "Gran Almacén", "Floristerías", "Confitería",
-        "Ferretería", "Librerías"
+        "Ferretería", "Librerías", "Joyerías", "Centros Comerciales", "Tienda Tipo Almacén"
     ],
     "MODA Y BELLEZA": [
         "Barbería", "Cuidado Del Cabello", "Esteticista", "Estudio De Tatuajes Y Piercings",
-        "Peluquerías", "Salón De Belleza", "Salón De Uñas", "Spas", "Sastre"
+        "Peluquerías", "Salón De Belleza", "Salón De Uñas", "Spas", "Sastre", "Maquillador", "Cuidado De Pies", "Centro De Bronceado"
     ],
     "EDUCACIÓN": [
         "Bibliotecas", "Colegios", "Escuela Primaria", "Instituto", "Universidades", "Preescolar"
     ],
     "SALUD Y MEDICINA": [
-        "Salud", "Clínica Dental", "Clínica Dermatológica", "Clínicas", "Dentistas", "Droguerías",
+        "Salud", "Clínica Dental", "Clínica Dermatológica", "Dentistas", "Droguerías",
         "Farmacias", "Hospitales", "Fisioterapeuta", "Masajes", "Laboratorio Médico",
         "Médico", "Quiropráctico", "Centro De Bienestar", "Veterinaria"
     ],
     "CULTURA, ARTE Y NATURALEZA": [
-        "Centro Cultural", "Lugar De Interés", "Lugar Emblemático Cultural", "Escultura", "Monumento",
-        "Museos", "Plaza", "Sitio Histórico", "Teatro De Artes Escénicas", "Teatros",
-        "Galería De Arte", "Estudio De Arte", "Acuarios", "Jardín", "Jardín Botánico",
-        "Granjas", "Zoológicos"
+        "Centro Cultural", "Lugar De Interés", "Escultura", "Monumento",
+        "Museos", "Plaza", "Sitio Histórico", "Teatro De Artes Escénicas", 'Lugar Emblemático', 
+        "Galería De Arte", "Estudio De Arte", "Acuario", "Jardín", "Jardín Botánico", "Zona De Picnic",
+        "Granjas", "Zoológicos", "Parque Nacional", "Lugar Histórico", "Centro De Información Turística", "Mirador", "Planetario"
     ],
     "OCIO": [
         "Cine", "Club De Comedia", "Centro De Ocio",
-        "Boleras", "Montaña Rusa", "Parque Acuático", "Parque Estatal", "Parque Infantil",
-        "Parque Para Perros", "Parques", "Parques De Atracciones", "Salón Recreativo",
-        "Atracción Turística"
+        "Boleras", "Parque Infantil",
+        "Parques", "Parques De Atracciones", "Salón Recreativo",
+        "Atracción Turística", "Campamento Infantil", "Casino", "Karaoke"
     ],
     "EVENTOS Y CELEBRACIONES": [
-        "Sala De Baile", "Sala De Conciertos", "Sala De Eventos", "Salón De Bodas", "Recinto", "Servicio De Catering"
+        "Sala De Baile", "Sala De Conciertos", "Sala De Eventos", "Salón De Bodas", "Recinto",
+        "Servicio De Catering", "Auditorio", "Salón De Banquetes", "Estadio", "Pabellón", "Establecimiento", "Centro De Convenciones", "Centro Comunitario"
     ],
     "SERVICIOS": [
         "Cerrajero", "Electricista", "Fontanero", "Empresa De Mudanzas", "Empresa De Pintura",
@@ -121,7 +129,8 @@ grupos = {
         "Almacenaje", "Aseguradora", "Consultoras", "Contratista General", "Mensajería",
         "Oficina Corporativa", "Operador De Telecomunicaciones", "Organizador De Campamentos De Verano",
         "Servicios Financieros", "Tanatorios", "Taller Mecánico", "Concesionario",
-        "Abogado", "Campamento Infantil"
+        "Abogado", "Alquiler De Películas", "Aseos Públicos", "Banco", "Cajero Automático", "Contabilidad",
+        "Lavandería", "Contratista De Techos", "Oficina De Correos", "Dirección"
     ]
 }
 
@@ -135,6 +144,7 @@ if "OTROS" not in CAT2EMOJI:
 # CARGA CSV
 df = pd.read_csv(CSV_FILE, sep=",", encoding="utf-8-sig", dtype=str, on_bad_lines="skip")
 
+#----------------------------------------------------------------------------------
 # ID único y PLACE_ID secuencial si falta
 df.reset_index(inplace=True)
 df.rename(columns={"index": "ID"}, inplace=True)
