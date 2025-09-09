@@ -1444,34 +1444,33 @@ login_tpl = """
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
-    """Registro mínimo + login automático."""
     if request.method == "POST":
         username = request.form["username"].strip()
         email = request.form["email"].strip().lower()
         password = request.form["password"]
         if User.query.filter((User.username == username) | (User.email == email)).first():
             flash("Usuario o email ya existe")
-            return render_template_string(register_tpl)
+            return render_template("register.html")
         user = User(username=username, email=email, password_hash=generate_password_hash(password))
         db.session.add(user)
         db.session.commit()
         login_user(user)
-        return redirect(url_for("home") if "home" in [r.rule for r in app.url_map.iter_rules()] else url_for("index"))
-    return render_template_string(register_tpl)
+        return redirect(url_for("index"))
+    return render_template("register.html")
+
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    """Login por username o email."""
     if request.method == "POST":
         u = request.form["username"].strip()
         password = request.form["password"]
         user = User.query.filter((User.username == u) | (User.email == u)).first()
         if user and check_password_hash(user.password_hash, password):
             login_user(user)
-            return redirect(url_for("home") if "home" in [r.rule for r in app.url_map.iter_rules()] else url_for("index"))
+            return redirect(url_for("index"))
         flash("Credenciales no válidas")
-    return render_template_string(login_tpl)
+    return render_template("login.html")
 
 
 @app.route("/logout")
