@@ -6,8 +6,8 @@ conda activate turismo
 python -m pip install --upgrade pip
 cd ruta
 pip install -r requirements.txt
-cd ruta\smartcitytour\scripts
-python mapa_madrid.py
+cd ruta\SmartCityTour_\scripts
+python mapa_madrid.py     #ten paciencia, tarda un poco en cargar
 cd .. 
 python app.py
 flask run
@@ -17,9 +17,9 @@ flask run
 Instrucciones para subir cambios al git 
 
 cd ruta_donde_queramos_guardar_la_carpeta
-git clone https://github.com/AnteaCabanellas/smartcitytour.git
+git clone https://github.com/aranchaciprian/SmartCityTour_.git
 LUEGO MODIFICAMOS LO QUE SEA DE LA CARPETA
-cd smartcitytour
+cd SmartCityTour_
 git checkout -b nombre_rama
 git status
 git add -A
@@ -30,7 +30,7 @@ git push origin nombre_rama
 ###########################################################
 INSTRUCCIONES NUEVAS CON RENDER
 Primer arranque “de cero”
-cd C:\ruta\smartcitytour
+cd C:\ruta\SmartCityTour_
 conda create --name turismo python=3.10 -y
 conda activate turismo
 python -m pip install --upgrade pip
@@ -46,7 +46,7 @@ flask --app app --debug run
 
 
 Arranque del día a día (sin cambios de modelos/datos)
-cd C:\ruta\smartcitytour
+cd C:\ruta\SmartCityTour_
 conda activate turismo
 flask --app app --debug run
 
