@@ -1413,34 +1413,6 @@ def api_conversation_place_ids(conversation_id: str):
     return jsonify({"place_ids": place_ids, "names": names, "ts": st.get("ts", 0)})
 
 
-# ======================
-# Rutas Auth simples (templates inline)
-# ======================
-register_tpl = """
-<!doctype html>
-<title>Registro</title>
-<h2>Crear cuenta</h2>
-<form method="post">
-  <input name="username" placeholder="Usuario" required>
-  <input name="email" placeholder="Email" required type="email">
-  <input name="password" placeholder="Contraseña" required type="password">
-  <button type="submit">Registrarme</button>
-</form>
-<p><a href="{{ url_for('login') }}">Ya tengo cuenta</a></p>
-"""
-
-login_tpl = """
-<!doctype html>
-<title>Login</title>
-<h2>Iniciar sesión</h2>
-<form method="post">
-  <input name="username" placeholder="Usuario o email" required>
-  <input name="password" placeholder="Contraseña" required type="password">
-  <button type="submit">Entrar</button>
-</form>
-<p><a href="{{ url_for('register') }}">Crear cuenta</a></p>
-"""
-
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
