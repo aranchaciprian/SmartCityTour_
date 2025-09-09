@@ -25,7 +25,7 @@ git status
 git add -A
 git status
 git commit -m "escribimos_que_hemos_cambiado"
-git push origina nombre_rama
+git push origin nombre_rama
 
 ###########################################################
 INSTRUCCIONES NUEVAS CON RENDER
@@ -35,15 +35,15 @@ conda create --name turismo python=3.10 -y
 conda activate turismo
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+
 conda env config vars set FLASK_APP=app FLASK_DEBUG=1 DATASET_TUI=data/BBDD_TUI.csv
 conda deactivate & conda activate turismo
-
 flask --app app db migrate -m "schema update"
 flask --app app db upgrade
-
 python scripts\load_tui.py
 python scripts\mapa_madrid.py
 flask --app app --debug run
+
 
 Arranque del día a día (sin cambios de modelos/datos)
 cd C:\ruta\smartcitytour
