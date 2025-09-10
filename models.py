@@ -24,7 +24,7 @@ class Tui(db.Model):
     TIPOS_TUI = db.Column(db.Text)
     NOMBRE_TUI = db.Column(db.String(255), index=True)
 
-    ACCESIBILIDAS_SILLA_RUEDAS = db.Column(db.String(50))
+    ACCESIBILIDAD_SILLA_RUEDAS = db.Column(db.String(50))
     RESERVA_POSIBLE = db.Column(db.String(50))
 
     # << Cambios clave: pasamos a TEXT para soportar largos >>
