@@ -38,6 +38,7 @@ pip install -r requirements.txt
 
 conda env config vars set FLASK_APP=app FLASK_DEBUG=1 DATASET_TUI=data/BBDD_TUI.csv
 conda deactivate & conda activate turismo
+flask --app app db migrate -m "add conversations table"
 flask --app app db migrate -m "schema update"
 flask --app app db upgrade
 python scripts\load_tui.py
