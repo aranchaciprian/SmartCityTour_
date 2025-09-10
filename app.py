@@ -1020,6 +1020,46 @@ def _coherence_score(hits: pd.DataFrame) -> float:
     mx = float(pd.to_numeric(s, errors="coerce").fillna(0).max())
     return min(1.0, mx / 10.0)
 
+def _parse_selected_idx(text: str) -> List[int]:
+    """Extrae [índices] del bloque <pins>...<pins> al final de la respuesta del LLM."""
+    try:
+        m = re.search(r"<pins>\s*(\{.*?\}|\[.*?\])\s*</pins>", text, re.S)
+        if not m:
+            return []
+        raw = m.group(1)
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            arr = data.get("selected_idx", [])
+        else:
+            arr = data
+        out: List[int] = []
+        for x in arr:
+            try:
+                out.append(int(x))
+            except Exception:
+                continue
+        return [i for i in out if i >= 1]
+    except Exception:
+        return []
+
+def _idx_to_place_ids(idxs: List[int], catalog: List[Dict[str, Any]]) -> List[str]:
+    """Convierte índices 1-based del catálogo reciente en place_ids únicos preservando orden."""
+    by_idx = {item.get("idx"): (item.get("place_id") or "").strip() for item in catalog}
+    pids = [(by_idx.get(i) or "") for i in idxs]
+    pids = [p for p in pids if p]
+    seen: set[str] = set()
+    uniq: List[str] = []
+    for p in pids:
+        if p in seen:
+            continue
+        seen.add(p)
+        uniq.append(p)
+    return uniq
+
+def _strip_pins_block(text: str) -> str:
+    """Elimina el bloque <pins>...<pins> del texto para no mostrarlo al usuario."""
+    return re.sub(r"\s*<pins>\s*(\{.*?\}|\[.*?\])\s*</pins>\s*$", "", text, flags=re.S)
+
 
 # ======================
 # Rutas
@@ -1136,22 +1176,6 @@ def chat():
             }
         )
 
-    # === Publicación de place_ids para el front ===
-    def _extract_unique_pids(ctx_list: List[Dict[str, Any]]) -> List[str]:
-        pids = [ (item.get("place_id") or "").strip() for item in ctx_list ]
-        pids = [p for p in pids if p]
-        return _ordered_unique(pids)
-
-    if used_csv:
-        place_ids_for_map = _extract_unique_pids(csv_context)
-        _conv_publish_map_ids(conversation_id, place_ids_for_map)
-        LAST_PLAN[conversation_id] = {
-            "place_ids": list(place_ids_for_map),
-            "names": [c["nombre"] for c in csv_context][:len(place_ids_for_map)],
-            "ts": int(time.time()),
-        }
-    else:
-        _conv_publish_map_ids(conversation_id, [])  # sin CSV no publicamos IDs
 
     # 4) Catálogo para concurrencia (sirva haya CSV o no)
     catalog_rows = []
@@ -1190,23 +1214,30 @@ def chat():
         "- No inventes teléfonos ni precios exactos. Puedes dar rangos o recomendaciones prudentes.\n\n"
         "Intención por turno (reglas duras):\n"
         "1) Genera un **PLAN** solo si el mensaje ACTUAL contiene sinónimos de plan (plan, itinerario, ruta, agenda, programa, planning, cronograma, schedule, tour, recorrido, itinerary, propuesta, timeline).\n"
-        "2) Si el usuario hace un **follow‑up** (p. ej., “respecto a lo anterior”, “sobre lo anterior”, “lo de antes”) y NO pide plan explícitamente, responde en **modo INFO** (concurrente) sin crear un plan nuevo.\n"
+        "2) Si el usuario hace un **follow‑up** y NO pide plan explícitamente, responde en **modo INFO**.\n"
         "3) Si pide **info general**, responde en modo INFO.\n\n"
         "Comprensión del **contexto conversacional** (precisión):\n"
-        "- Recibirás `historial_compacto` con los últimos turnos y `catalogo_reciente` (ítems con `idx`, `nombre`, `place_id`).\n"
-        "- Si la consulta actual apunta a algo mencionado antes (por nombre, por `idx` del listado anterior, o por referencia ambigua tipo “el segundo”, “el del parque”, “el museo”), **resuelve la referencia** usando `catalogo_reciente` y responde sobre ese ítem concreto.\n"
-        "- Si hay ambigüedad entre varios ítems, **elige el más probable** según el historial y la intención; SOLO si la ambigüedad hace insegura la recomendación, formula **una única pregunta de desambiguación muy breve** y a la vez ofrece la **mejor respuesta provisional** con supuestos explícitos.\n"
-        "- Mantén la continuidad: respeta preferencias del usuario detectadas en el historial (horarios, presupuesto, zonas, accesibilidad, 'abierto ahora').\n"
-        "- Si el usuario pide 'más detalles' sobre algo ya mostrado, amplía con contexto útil (cómo llegar, mejores horas, tiempo típico en visita, alternativas cercanas, tips) sin repetir largos bloques ya dados.\n\n"
+        "- Recibirás `historial_compacto` y `catalogo_reciente` (ítems con `idx`, `nombre`, `place_id`).\n"
+        "- Si la consulta actual referencia algo previo (por nombre o por índice), resuelve la referencia usando `catalogo_reciente`.\n"
+        "- Si hay ambigüedad fuerte, formula **una** pregunta breve de desambiguación y ofrece una respuesta provisional con supuestos explícitos.\n"
+        "- Respeta preferencias del historial (horarios, presupuesto, zonas, accesibilidad, 'abierto ahora').\n\n"
         "Formato y nivel de detalle (consistencia):\n"
-        "- **PLAN**: 5–7 paradas; intervalos HH:MM–HH:MM; orden lógico; trayectos sugeridos (a pie/metro/bus con tiempos estimados). Cada parada debe tener el **mismo nivel de detalle** que en INFO: nombre, breve descripción, dirección, horario (o 'Horarios no disponibles; verifica la web oficial'), web oficial (WEBSITE) y enlace a mapa (URL), accesibilidad si está en CSV.\n"
-        "- **INFO**: listado ≤10 con bullets y el mismo detalle de arriba.\n"
-        "- Si preguntan CÓMO LLEGAR: rutas típicas (metro/bus/a pie), nodos de referencia y tiempos estimados.\n\n"
+        "- **PLAN**: 5–7 paradas; intervalos HH:MM–HH:MM; orden lógico; trayectos sugeridos; mismo nivel de detalle que INFO.\n"
+        "- **INFO**: listado ≤10 con bullets y el mismo detalle.\n"
+        "- Si preguntan CÓMO LLEGAR: rutas típicas (metro/bus/a pie) y tiempos estimados.\n\n"
         "Reglas de datos y coherencia:\n"
-        "- Valida coherencia del CSV con la consulta. Si es insuficiente o no encaja, entrega una respuesta útil basada en conocimiento general **sin mencionar el CSV**. En ese caso, asume que el cliente no verá place_ids.\n"
-        "- Nunca declares explícitamente “no tengo datos del CSV”.\n"
-        "- Iconografía: usa ⏰ 🎯 🗺️ 🌐 📞 🦽 🍽️ 🚇 🚌 🚶 💡 ✨ 💶 🌦️ cuando ayude a la lectura."
+        "- Si `contexto_csv` tiene elementos, **enuméralos exactamente** 1..N **en el mismo orden** y **no añadas** lugares fuera de `contexto_csv`.\n"
+        "- Si necesitas mencionar alternativas generales, hazlo en un bloque aparte titulado **Sugerencias generales (sin pin)** (estas NO deben enumerarse ni mapearse a pins).\n"
+        "- Si `contexto_csv` está vacío o es incoherente, responde en general **sin enumerar lugares**.\n"
+        "- Iconografía: usa ⏰ 🎯 🗺️ 🌐 📞 🦽 🍽️ 🚇 🚌 🚶 💡 ✨ 💶 🌦️ cuando ayude a la lectura.\n\n"
+        "➡️ **Al FINAL** de la respuesta, incluye un bloque JSON dentro de etiquetas <pins>...</pins> con los índices seleccionados del `contexto_csv`:\n"
+        "<pins>\n"
+        "{ \"selected_idx\": [1,2,3] }\n"
+        "</pins>\n"
+        "- Si no usaste `contexto_csv`, devuelve `<pins>{\"selected_idx\": []}</pins>`.\n"
+        "- No expliques este bloque ni añadas texto entre las etiquetas."
     )
+
 
     user_block = {
         "modo": "overview" if bootstrap else "normal",
@@ -1227,15 +1258,49 @@ def chat():
         {"role": "user", "content": json.dumps(user_block, ensure_ascii=False)},
     ]
     reply = _llm(msgs, temperature=0.6, max_tokens=4000)
+    
+   
+
+    # --- Alineación mapa ↔️ chat basada en <pins> ---
+    catalog_recent = _conv_get_catalog(conversation_id)  # ya creado desde csv_context
+    selected_idx = _parse_selected_idx(reply)
+    
+    if used_csv:
+        if not selected_idx:
+            # Fallback: intenta inferir por numeración 1., 2., 3. dentro del texto
+            found = re.findall(r"(?m)^\s*(\d{1,2})[)\.\-]\s", reply)
+            try_idx = [int(x) for x in found if x.isdigit()]
+            try_idx = [i for i in try_idx if 1 <= i <= len(catalog_recent)]
+            selected_idx = try_idx
+    
+        place_ids_for_map = _idx_to_place_ids(selected_idx, catalog_recent) if selected_idx else []
+        _conv_publish_map_ids(conversation_id, place_ids_for_map)
+    
+        LAST_PLAN[conversation_id] = {
+            "place_ids": list(place_ids_for_map),
+            "names": [
+                it.get("nombre") or it.get("name") or ""
+                for it in catalog_recent
+                if (it.get("place_id") or "").strip() in place_ids_for_map
+            ],
+            "ts": int(time.time()),
+        }
+    else:
+        # Sin CSV no publicamos pins aunque el LLM escriba generalidades
+        _conv_publish_map_ids(conversation_id, [])
+    
+    # Limpia el bloque <pins> del texto antes de devolverlo al usuario
+    reply_clean = _strip_pins_block(reply)
+
     if current_user.is_authenticated:
         _save_conversation_snapshot(
             current_user.id,
             conversation_id,
             messages,
-            reply
+            reply_clean
         )
     return jsonify({
-        "response": reply,
+        "response": reply_clean,
         # para facilitar el front: devolvemos también los ids publicados
         "place_ids": _conv_get(conversation_id).get("last_map_ids", []),
         "used_csv": used_csv
