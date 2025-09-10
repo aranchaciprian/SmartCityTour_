@@ -52,7 +52,8 @@ from openai import OpenAI
 from werkzeug.security import check_password_hash, generate_password_hash
 
 # Modelos propios
-from models import db, Favorite, Tui, User
+from models import db, Favorite, Tui, User, Conversation
+
 
 # Scraping opcional (horarios)
 try:
@@ -128,6 +129,53 @@ MAD_TZ = pytz.timezone("Europe/Madrid")
 # ======================
 # Utilidades: texto / fuzzy
 # ======================
+
+def _save_conversation_snapshot(user_id: int, conversation_id: str, messages: list, reply: str):
+    """
+    Guarda (o actualiza) la fila de conversations para (user_id, conversation_id)
+    con el snapshot completo de messages + la última reply del asistente.
+    """
+    if not conversation_id:
+        conversation_id = "default"  # respaldo si el front no envía nada
+
+    try:
+        conv = Conversation.query.filter_by(
+            user_id=user_id, conversation_id=conversation_id
+        ).first()
+
+        # Tomamos el historial completo que nos envía el front y añadimos nuestra reply
+        snapshot = list(messages) + [{"role": "assistant", "content": reply}]
+
+        # Últimos place_ids mostrados en el mapa para esta conversación
+        last_map_ids = _conv_get(conversation_id).get("last_map_ids", [])
+
+        # Un título útil (primer mensaje del usuario)
+        first_user = next((m.get("content") for m in messages if m.get("role") == "user"), None)
+        title = (first_user or "")[:100] if first_user else None
+
+        if conv:
+            conv.messages = snapshot
+            conv.last_place_ids = last_map_ids
+            conv.last_user_text = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), None)
+            conv.last_assistant_text = reply
+        else:
+            conv = Conversation(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                title=title,
+                messages=snapshot,
+                last_place_ids=last_map_ids,
+                last_user_text=next((m["content"] for m in reversed(messages) if m.get("role") == "user"), None),
+                last_assistant_text=reply,
+            )
+            db.session.add(conv)
+
+        db.session.commit()
+
+    except Exception as e:
+        app.logger.exception("No se pudo guardar la conversación: %s", e)
+
+
 def norm_text(s: str) -> str:
     """Normaliza: minúsculas, sin tildes, colapsa espacios, quita ? sueltos."""
     if not isinstance(s, str):
@@ -843,7 +891,7 @@ def _catalog_for_coref(conv_id: str) -> List[Dict[str, Any]]:
     """
     items = _conv_get_catalog(conv_id)
     out = []
-    for it in items[:12]:
+    for it in items[:24]:
         out.append({
             "idx": it.get("idx"),
             "nombre": it.get("name"),
@@ -901,7 +949,7 @@ def _llm(
     messages: List[Dict[str, str]],
     model: Optional[str] = None,
     temperature: float = 0.6,
-    max_tokens: int = 1200,
+    max_tokens: int = 4000,
 ) -> str:
     mdl = model or os.getenv("OPENAI_MODEL", "gpt-4o")
     resp = client.chat.completions.create(
@@ -1133,7 +1181,7 @@ def chat():
     )
 
     # === NUEVO: historial compacto + catálogo reciente ===
-    historial_compacto = _compact_history(messages, max_turns=12, max_chars=1800)
+    historial_compacto = _compact_history(messages, max_turns=30, max_chars=6000)
     catalogo_coref = _catalog_for_coref(conversation_id)
 
     system = (
@@ -1178,8 +1226,14 @@ def chat():
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(user_block, ensure_ascii=False)},
     ]
-    reply = _llm(msgs, temperature=0.6, max_tokens=1100)
-
+    reply = _llm(msgs, temperature=0.6, max_tokens=4000)
+    if current_user.is_authenticated:
+        _save_conversation_snapshot(
+            current_user.id,
+            conversation_id,
+            messages,
+            reply
+        )
     return jsonify({
         "response": reply,
         # para facilitar el front: devolvemos también los ids publicados
@@ -1187,6 +1241,39 @@ def chat():
         "used_csv": used_csv
     })
 
+
+@app.route("/api/conversations", methods=["GET"])
+@login_required
+def list_conversations():
+    rows = (Conversation.query
+            .filter_by(user_id=current_user.id)
+            .order_by(Conversation.updated_at.desc())
+            .all())
+    out = []
+    for r in rows:
+        out.append({
+            "conversation_id": r.conversation_id,
+            "title": r.title,
+            "updated_at": r.updated_at.isoformat(),
+            "last_user_text": r.last_user_text,
+        })
+    return jsonify(out)
+
+@app.route("/api/conversations/<conv_id>", methods=["GET"])
+@login_required
+def get_conversation(conv_id):
+    r = Conversation.query.filter_by(
+        user_id=current_user.id, conversation_id=conv_id
+    ).first()
+    if not r:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({
+        "conversation_id": r.conversation_id,
+        "title": r.title,
+        "messages": r.messages or [],
+        "last_place_ids": r.last_place_ids or [],
+        "updated_at": r.updated_at.isoformat()
+    })
 
 # ===== Vistas auxiliares =====
 @app.route("/widget")
