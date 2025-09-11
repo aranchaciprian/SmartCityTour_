@@ -25,4 +25,4 @@ tqdm>=4.66
 geopy>=2.4
 ratelimit>=2.2
 
-
+tzdata>=2024.1

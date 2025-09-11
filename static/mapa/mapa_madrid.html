@@ -3,14 +3,6 @@
 <head>
     
     <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
-    
-        <script>
-            L_NO_TOUCH = false;
-            L_DISABLE_3D = false;
-        </script>
-    
-    <style>html, body {width: 100%;height: 100%;margin: 0;padding: 0;}</style>
-    <style>#map {position:absolute;top:0;bottom:0;right:0;left:0;}</style>
     <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
@@ -25,7 +17,7 @@
             <meta name="viewport" content="width=device-width,
                 initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
             <style>
-                #map_4e99a7a9daf29ffbd17f4352a88cd64b {
+                #map_c8b09925530353253873ddcf19fc20af {
                     position: relative;
                     width: 100.0%;
                     height: 100.0%;
@@ -34,6 +26,29 @@
                 }
                 .leaflet-container { font-size: 1rem; }
             </style>
+
+            <style>html, body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            </style>
+
+            <style>#map {
+                position:absolute;
+                top:0;
+                bottom:0;
+                right:0;
+                left:0;
+                }
+            </style>
+
+            <script>
+                L_NO_TOUCH = false;
+                L_DISABLE_3D = false;
+            </script>
+
         
 </head>
 <body>
@@ -78,7 +93,7 @@
 </style>
 
 <script id="data-json" type="application/json">[]</script>
-<script id="cat2subs-json" type="application/json">{"TRANSPORTE": ["Alquiler De Coches", "Estaciones De Autobús", "Estaciones De Metro", "Estaciones De Tren", "Estación De Transporte"], "GASOLINERAS Y APARCAMIENTOS": ["Aparcamiento Disuasorio", "Aparcamientos", "Estación De Carga De Vehículos Eléctricos", "Gasolineras", "Lavadero De Coches", "Área De Servicio Para Camiones"], "ALOJAMIENTOS": ["Alojamiento", "B&B (Cama Y Desayuno)", "Cabañas", "Campings", "Casa De Huéspedes", "Complejo De Apartamentos", "Complejo De Condominios", "Edificio De Apartamentos", "Habitación De Huéspedes Privada", "Hostal", "Hotel De Larga Estancia", "Hotel Resort", "Hoteles", "Moteles", "Parque De Casas Móviles", "Posada", "Área Para Autocaravanas"], "ESPACIOS DEPORTIVOS": ["Campo Deportivo", "Campos De Golf", "Centro De Deportes De Aventura", "Centro De Fitness", "Club Deportivo", "Coaching Deportivo", "Complejo Deportivo", "Estación De Esquí", "Estanque De Pesca", "Estudio De Yoga", "Gimnasios", "Instalación Deportiva", "Parque De Ciclismo", "Parque De Skate", "Piscinas", "Pista De Hielo", "Saunas", "Zona De Senderismo"], "OCIO NOCTURNO": ["Discotecas", "Pub"], "ADMINISTRACIÓN PÚBLICA Y SEGURIDAD": ["Ayuntamientos", "Embajada", "Marina", "Oficina De Gobierno Local", "Oficina Gubernamental", "Policía", "Subunidad"], "COMIDA Y BEBIDA": ["Asador", "Bar De Vinos", "Bar Y Parrilla", "Bares", "Bocatería", "Cafetería Americana", "Café Para Perros", "Cafés", "Chocolatería", "Cibercafé", "Comida", "Comida Para Llevar", "Hamburguesería", "Heladerías", "Marisquerías", "Panaderías", "Pastelerías", "Patio De Comidas", "Pizzería", "Reparto De Comida", "Restaurante Africano", "Restaurante Asiático", "Restaurante Brasileño", "Restaurante Bufé", "Restaurante Chino", "Restaurante Coreano", "Restaurante De Alta Cocina", "Restaurante De Barbacoa", "Restaurante De Brunch", "Restaurante De Comida Rápida", "Restaurante De Desayunos", "Restaurante De Oriente Medio", "Restaurante De Postres", "Restaurante De Ramen", "Restaurante De Sushi", "Restaurante Español", "Restaurante Estadounidense", "Restaurante Francés", "Restaurante Griego", "Restaurante Indio", "Restaurante Italiano", "Restaurante Japonés", "Restaurante Libanés", "Restaurante Mediterráneo", "Restaurante Mexicano", "Restaurante Tailandés", "Restaurante Turco", "Restaurante Vegano", "Restaurante Vegetariano", "Restaurante Vietnamita", "Restaurantes", "Salón De Té"], "ESPACIOS RELIGIOSOS": ["Cementerio", "Iglesias", "Lugar De Culto", "Mezquitas", "Templo Hindú"], "TIENDAS DE COMIDA": ["Carnicerías", "Charcuterías", "Mayorista", "Mercados", "Supermercado Asiático", "Supermercados"], "TIENDAS": ["Centros Comerciales", "Confitería", "Ferretería", "Floristerías", "Gran Almacén", "Joyerías", "Librerías", "Tienda De Alimentación", "Tienda De Artículos Para El Hogar", "Tienda De Açaí", "Tienda De Bagels", "Tienda De Bicicletas", "Tienda De Bricolaje", "Tienda De Comestibles", "Tienda De Conveniencia", "Tienda De Deportes", "Tienda De Descuentos", "Tienda De Donuts", "Tienda De Dulces", "Tienda De Electrónica", "Tienda De Licores", "Tienda De Mascotas", "Tienda De Muebles", "Tienda De Móviles", "Tienda De Regalos", "Tienda De Repuestos", "Tienda De Ropa", "Tienda De Zumos", "Tienda Tipo Almacén", "Tiendas", "Zapaterías"], "MODA Y BELLEZA": ["Barbería", "Centro De Bronceado", "Cuidado De Pies", "Cuidado Del Cabello", "Esteticista", "Estudio De Tatuajes Y Piercings", "Maquillador", "Peluquerías", "Salón De Belleza", "Salón De Uñas", "Sastre", "Spas"], "EDUCACIÓN": ["Bibliotecas", "Colegios", "Escuela Primaria", "Instituto", "Preescolar", "Universidades"], "SALUD Y MEDICINA": ["Centro De Bienestar", "Clínica Dental", "Clínica Dermatológica", "Dentistas", "Droguerías", "Farmacias", "Fisioterapeuta", "Hospitales", "Laboratorio Médico", "Masajes", "Médico", "Quiropráctico", "Salud", "Veterinaria"], "CULTURA, ARTE Y NATURALEZA": ["Acuario", "Centro Cultural", "Centro De Información Turística", "Escultura", "Estudio De Arte", "Galería De Arte", "Granjas", "Jardín", "Jardín Botánico", "Lugar De Interés", "Lugar Emblemático", "Lugar Histórico", "Mirador", "Monumento", "Museos", "Parque Nacional", "Planetario", "Plaza", "Sitio Histórico", "Teatro De Artes Escénicas", "Zona De Picnic", "Zoológicos"], "OCIO": ["Atracción Turística", "Boleras", "Campamento Infantil", "Casino", "Centro De Ocio", "Cine", "Club De Comedia", "Karaoke", "Parque Infantil", "Parques", "Parques De Atracciones", "Salón Recreativo"], "EVENTOS Y CELEBRACIONES": ["Auditorio", "Centro Comunitario", "Centro De Convenciones", "Establecimiento", "Estadio", "Pabellón", "Recinto", "Sala De Baile", "Sala De Conciertos", "Sala De Eventos", "Salón De Banquetes", "Salón De Bodas", "Servicio De Catering"], "SERVICIOS": ["Abogado", "Agencia De Cuidado Infantil", "Agencia De Excursiones", "Agencia De Viajes", "Almacenaje", "Alquiler De Películas", "Aseguradora", "Aseos Públicos", "Banco", "Cajero Automático", "Cerrajero", "Concesionario", "Consultoras", "Contabilidad", "Contratista De Techos", "Contratista General", "Dirección", "Electricista", "Empresa De Mudanzas", "Empresa De Pintura", "Fontanero", "Inmobiliarias", "Lavandería", "Mensajería", "Oficina Corporativa", "Oficina De Correos", "Operador De Telecomunicaciones", "Organizador De Campamentos De Verano", "Servicios Financieros", "Taller Mecánico", "Tanatorios"], "OTROS": ["(sin subcategoría)"]}</script>
+<script id="cat2subs-json" type="application/json">{"TRANSPORTE": ["Alquiler De Coches", "Estaciones De Autobús", "Estaciones De Metro", "Estaciones De Tren", "Estación De Transporte"], "GASOLINERAS Y APARCAMIENTOS": ["Aparcamientos", "Estación De Carga De Vehículos Eléctricos", "Lavadero De Coches", "(sin subcategoría)"], "ALOJAMIENTOS": ["Alojamiento", "B&B (Cama Y Desayuno)", "Casa De Huéspedes", "Complejo De Apartamentos", "Edificio De Apartamentos", "Habitación De Huéspedes Privada", "Hostal", "Hotel De Larga Estancia", "Hotel Resort", "Hoteles", "Moteles", "Parque De Casas Móviles", "Posada", "Área Para Autocaravanas", "(sin subcategoría)"], "ESPACIOS DEPORTIVOS": ["Campo Deportivo", "Campos De Golf", "Centro De Deportes De Aventura", "Centro De Fitness", "Club Deportivo", "Coaching Deportivo", "Complejo Deportivo", "Estación De Esquí", "Estudio De Yoga", "Gimnasios", "Instalación Deportiva", "Parque De Skate", "Piscinas", "Pista De Hielo", "Saunas", "Zona De Senderismo", "(sin subcategoría)"], "OCIO NOCTURNO": ["Discotecas", "Pub", "(sin subcategoría)"], "ADMINISTRACIÓN PÚBLICA Y SEGURIDAD": ["Embajada", "Marina", "Oficina De Gobierno Local", "Oficina Gubernamental", "Policía", "Subunidad", "(sin subcategoría)"], "COMIDA Y BEBIDA": ["Asador", "Bar De Vinos", "Bar Y Parrilla", "Bares", "Bocatería", "Cafetería Americana", "Café Para Perros", "Cafés", "Chocolatería", "Cibercafé", "Comida", "Comida Para Llevar", "Hamburguesería", "Heladerías", "Marisquerías", "Panaderías", "Pastelerías", "Patio De Comidas", "Pizzería", "Reparto De Comida", "Restaurante Asiático", "Restaurante Brasileño", "Restaurante Bufé", "Restaurante Chino", "Restaurante Coreano", "Restaurante De Alta Cocina", "Restaurante De Barbacoa", "Restaurante De Brunch", "Restaurante De Comida Rápida", "Restaurante De Desayunos", "Restaurante De Oriente Medio", "Restaurante De Postres", "Restaurante De Ramen", "Restaurante De Sushi", "Restaurante Español", "Restaurante Estadounidense", "Restaurante Francés", "Restaurante Griego", "Restaurante Indio", "Restaurante Italiano", "Restaurante Japonés", "Restaurante Mediterráneo", "Restaurante Mexicano", "Restaurante Tailandés", "Restaurante Turco", "Restaurante Vegano", "Restaurante Vegetariano", "Restaurantes", "Salón De Té", "(sin subcategoría)"], "ESPACIOS RELIGIOSOS": ["Iglesias", "Lugar De Culto"], "TIENDAS DE COMIDA": ["Carnicerías", "Charcuterías", "Mayorista", "Mercados", "Supermercado Asiático", "Supermercados", "(sin subcategoría)"], "TIENDAS": ["Centros Comerciales", "Confitería", "Ferretería", "Floristerías", "Gran Almacén", "Joyerías", "Librerías", "Tienda De Alimentación", "Tienda De Artículos Para El Hogar", "Tienda De Açaí", "Tienda De Bagels", "Tienda De Bicicletas", "Tienda De Bricolaje", "Tienda De Comestibles", "Tienda De Conveniencia", "Tienda De Deportes", "Tienda De Descuentos", "Tienda De Donuts", "Tienda De Dulces", "Tienda De Electrónica", "Tienda De Licores", "Tienda De Mascotas", "Tienda De Muebles", "Tienda De Móviles", "Tienda De Regalos", "Tienda De Repuestos", "Tienda De Ropa", "Tienda De Zumos", "Tienda Tipo Almacén", "Tiendas", "Zapaterías", "(sin subcategoría)"], "MODA Y BELLEZA": ["Barbería", "Cuidado Del Cabello", "Esteticista", "Estudio De Tatuajes Y Piercings", "Maquillador", "Peluquerías", "Salón De Belleza", "Salón De Uñas", "Sastre", "Spas", "(sin subcategoría)"], "EDUCACIÓN": ["Bibliotecas", "Colegios", "Escuela Primaria", "Instituto", "Preescolar", "Universidades", "(sin subcategoría)"], "SALUD Y MEDICINA": ["Centro De Bienestar", "Clínica Dental", "Clínica Dermatológica", "Dentistas", "Droguerías", "Farmacias", "Fisioterapeuta", "Hospitales", "Laboratorio Médico", "Masajes", "Médico", "Quiropráctico", "Salud", "Veterinaria", "(sin subcategoría)"], "CULTURA, ARTE Y NATURALEZA": ["Acuario", "Centro Cultural", "Centro De Información Turística", "Escultura", "Estudio De Arte", "Galería De Arte", "Granjas", "Jardín", "Lugar Emblemático", "Lugar Histórico", "Monumento", "Museos", "Parque Nacional", "Plaza", "Sitio Histórico", "Teatro De Artes Escénicas"], "OCIO": ["Atracción Turística", "Boleras", "Campamento Infantil", "Casino", "Centro De Ocio", "Cine", "Karaoke", "Parque Infantil", "Parques", "Parques De Atracciones", "Salón Recreativo", "(sin subcategoría)"], "EVENTOS Y CELEBRACIONES": ["Auditorio", "Centro Comunitario", "Estadio", "Pabellón", "Recinto", "Sala De Baile", "Sala De Conciertos", "Sala De Eventos", "Salón De Banquetes", "Salón De Bodas", "Servicio De Catering", "(sin subcategoría)"], "SERVICIOS": ["Abogado", "Agencia De Cuidado Infantil", "Agencia De Excursiones", "Agencia De Viajes", "Almacenaje", "Alquiler De Películas", "Aseguradora", "Aseos Públicos", "Banco", "Cajero Automático", "Cerrajero", "Concesionario", "Consultoras", "Contabilidad", "Contratista General", "Dirección", "Electricista", "Fontanero", "Inmobiliarias", "Lavandería", "Mensajería", "Oficina Corporativa", "Oficina De Correos", "Operador De Telecomunicaciones", "Organizador De Campamentos De Verano", "Servicios Financieros", "Taller Mecánico", "(sin subcategoría)"], "OTROS": ["(sin subcategoría)"]}</script>
 <script id="emoji-json" type="application/json">{"TRANSPORTE": "🚖", "GASOLINERAS Y APARCAMIENTOS": "⛽", "ALOJAMIENTOS": "🏨", "ESPACIOS DEPORTIVOS": "⚽", "OCIO NOCTURNO": "🍸", "ADMINISTRACIÓN PÚBLICA Y SEGURIDAD": "🏛️", "COMIDA Y BEBIDA": "🍽️", "ESPACIOS RELIGIOSOS": "🛐", "TIENDAS DE COMIDA": "🛒", "TIENDAS": "🛍️", "MODA Y BELLEZA": "💄", "EDUCACIÓN": "🎓", "SALUD Y MEDICINA": "🏥", "CULTURA, ARTE Y NATURALEZA": "🎭", "OCIO": "🎡", "EVENTOS Y CELEBRACIONES": "🎉", "SERVICIOS": "🛠️", "OTROS": "📍"}</script>
 <script id="filters-json" type="application/json">{"acc_silla": ["NO", "SI"], "precio": ["Barato", "Caro", "Moderado", "Muy caro", "No Disponible"], "estado": ["Abierto", "Cerrado temporalmente", "—"], "reserva": ["NO", "SI"]}</script>
 
@@ -1144,14 +1159,14 @@ window.addEventListener("message", (ev)=>{
 });
 </script>
     
-            <div class="folium-map" id="map_4e99a7a9daf29ffbd17f4352a88cd64b" ></div>
+            <div class="folium-map" id="map_c8b09925530353253873ddcf19fc20af" ></div>
         
 </body>
 <script>
     
     
-            var map_4e99a7a9daf29ffbd17f4352a88cd64b = L.map(
-                "map_4e99a7a9daf29ffbd17f4352a88cd64b",
+            var map_c8b09925530353253873ddcf19fc20af = L.map(
+                "map_c8b09925530353253873ddcf19fc20af",
                 {
                     center: [40.4168, -3.7038],
                     crs: L.CRS.EPSG3857,
@@ -1168,7 +1183,7 @@ window.addEventListener("message", (ev)=>{
 
         
     
-            var tile_layer_29e5145060ac33f331ab0e727200e602 = L.tileLayer(
+            var tile_layer_b8961b0d39ab1f9e085bb0cbc3573604 = L.tileLayer(
                 "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
                 {
   "minZoom": 0,
@@ -1185,7 +1200,7 @@ window.addEventListener("message", (ev)=>{
             );
         
     
-            tile_layer_29e5145060ac33f331ab0e727200e602.addTo(map_4e99a7a9daf29ffbd17f4352a88cd64b);
+            tile_layer_b8961b0d39ab1f9e085bb0cbc3573604.addTo(map_c8b09925530353253873ddcf19fc20af);
         
 </script>
 </html>

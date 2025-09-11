@@ -63,6 +63,22 @@ except Exception:
     requests = None
     BeautifulSoup = None
 
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # (raro en 3.10, pero por si acaso)
+
+MAD_TZ = ZoneInfo("Europe/Madrid")
+
+def _parse_hhmm(hhmm: str):
+    try:
+        h, m = map(int, hhmm.split(":")[:2])
+        if 0 <= h < 24 and 0 <= m < 60:
+            return h, m
+    except Exception:
+        pass
+    now = datetime.now(MAD_TZ)
+    return now.hour, now.minute
 
 # ======================
 # Configuración básica
@@ -949,7 +965,7 @@ def _llm(
     messages: List[Dict[str, str]],
     model: Optional[str] = None,
     temperature: float = 0.6,
-    max_tokens: int = 4000,
+    max_tokens: int = 8000,
 ) -> str:
     mdl = model or os.getenv("OPENAI_MODEL", "gpt-4o")
     resp = client.chat.completions.create(
@@ -1006,8 +1022,8 @@ def _detect_intent(messages: List[Dict[str, str]], conversation_id: str) -> str:
 
 def _target_count_for_intent(intent: str, bootstrap: bool) -> int:
     if bootstrap:
-        return 8
-    return 7 if (intent or "").lower() == "plan" else 8
+        return 6
+    return 6 if (intent or "").lower() == "plan" else 6
 
 
 def _coherence_score(hits: pd.DataFrame) -> float:
@@ -1073,39 +1089,46 @@ def index():
 @app.route("/chat", methods=["POST"])
 def chat():
     """Endpoint principal del chat (plan/info concurrente + comprensión del historial)."""
-    data = request.get_json()
+    data = request.get_json(force=True) or {}
+
+    # --- Mensajes e identificadores ---
     messages = data.get("messages")
     if not messages:
         return jsonify({"error": "No messages provided"}), 400
 
     conversation_id = (data.get("conversation_id") or data.get("conv_id") or "").strip()
-    user_latest = [m["content"] for m in messages if m["role"] == "user"][-1]
-    start_time = data.get("start_time") or "09:30"
+    user_latest = [m["content"] for m in messages if m.get("role") == "user"][-1]
+
+    # --- Hora de Madrid por defecto y 'now_dt' coherente ---
+    start_time = data.get("start_time") or datetime.now(MAD_TZ).strftime("%H:%M")
+    h, m = _parse_hhmm(start_time)
+    now_dt = datetime.now(MAD_TZ).replace(hour=h, minute=m, second=0, microsecond=0)
+
+    # --- Parámetros auxiliares ---
     start_lat = data.get("start_lat")
     start_lon = data.get("start_lon")
     prefer_open = bool(data.get("prefer_open"))
     bootstrap = bool(data.get("bootstrap"))
 
-    # Hora base para “abiertos ahora”
-    try:
-        hh, mm = map(int, (start_time or "09:30").split(":"))
-        base = datetime.now(MAD_TZ)
-        now_dt = base.replace(hour=hh, minute=mm, second=0, microsecond=0)
-    except Exception:
-        now_dt = datetime.now(MAD_TZ)
-
-    # Intención actual
+    # --- Intención actual + persistencia simple por conversación ---
     intent = _detect_intent(messages, conversation_id)
     _conv_update_last_intent(conversation_id, intent)
 
-    # 1) Candidatos del CSV
+    # Autoactivar "abierto ahora" si piden plan "hoy/ahora" (sin romper lo que venga del front)
+    if not prefer_open and intent == "plan":
+        q_norm_for_open = norm_text(user_latest)
+        if ("hoy" in q_norm_for_open) or ("ahora" in q_norm_for_open):
+            prefer_open = True
+
+    # --- 1) Candidatos del CSV ---
     hits = df.copy() if bootstrap else buscar_top(user_latest, max_resultados=60)
 
     if prefer_open:
+        # pista textual para el filtro de horarios
         user_latest = (user_latest + " abiertos ahora").strip()
     hits = _aplica_filtros(hits, user_latest, now_dt=now_dt)
 
-    # Proximidad / cerca
+    # --- Proximidad / "cerca de mí" ---
     q_norm = norm_text(user_latest)
     wants_near = any(w in q_norm for w in ["cerca", "alrededor", "cercano", "cercanos", "cercanas"])
     if start_lat is not None and start_lon is not None:
@@ -1113,32 +1136,28 @@ def chat():
         if wants_near:
             hits = _filter_by_radius_km(hits, start_lat, start_lon, radius_km=1.5)
 
-    # Rerank por memoria de conversación
+    # --- Rerank por memoria de conversación ---
     hits = _boost_recent_by_conv(hits, conversation_id, boost=0.6)
 
-    # Deduplicado de hits
+    # --- Deduplicado de hits ---
     if hits is not None and not hits.empty:
         if "PLACE_ID" in hits.columns:
             hits = hits.drop_duplicates(subset=["PLACE_ID"], keep="first")
         else:
-            keys = [
-                k
-                for k in ["ID", "NOMBRE_TUI", "LATITUD_TUI", "LONGITUD_TUI"]
-                if k in hits.columns
-            ]
+            keys = [k for k in ["ID", "NOMBRE_TUI", "LATITUD_TUI", "LONGITUD_TUI"] if k in hits.columns]
             if keys:
                 hits = hits.drop_duplicates(subset=keys, keep="first")
 
-    # 2) Coherencia CSV
+    # --- 2) Coherencia CSV y selección top-N ---
     coh = _coherence_score(hits)
     used_csv = (not hits.empty) and (coh >= 0.3)
 
-    n_target = _target_count_for_intent(intent, bootstrap)
+    n_target = _target_count_for_intent(intent, bootstrap)  # ideal 6–6 para ahorrar tokens
     top_rows = hits.head(n_target) if used_csv else hits.head(0)
 
-    # 3) Contexto CSV para el LLM
-    csv_context: List[Dict[str, Any]] = []
-    _seen_keys: set[str] = set()
+    # --- 3) Contexto CSV para el LLM ---
+    csv_context = []
+    _seen_keys = set()
 
     for _, r in top_rows.iterrows():
         horario = (r.get("HORARIO", "") or "").strip()
@@ -1154,43 +1173,27 @@ def chat():
             continue
         _seen_keys.add(key)
 
-        csv_context.append(
-            {
-                "place_id": pid,
-                "nombre": r.get("NOMBRE_TUI", ""),
-                "tipo": r.get("TIPOS_TUI", ""),
-                "direccion": r.get("DIRECCION", r.get("DIRECCION_TUI", "")),
-                "telefono": r.get("TELEFONO", ""),
-                "web": r.get("WEBSITE", "") or "",
-                "mapa": r.get("URL", "") or "",
-                "horario": horario
-                or "Horarios no disponibles; verifica la web oficial del sitio.",
-                "rating": (float(r.get("_RATING")) if pd.notna(r.get("_RATING")) else None),
-                "reseñas": (
-                    int(r.get("TOTAL_VALORACIONES_TUI"))
-                    if str(r.get("TOTAL_VALORACIONES_TUI", "")).isdigit()
-                    else None
-                ),
-                "lat": (float(r.get("LATITUD_TUI")) if pd.notna(r.get("LATITUD_TUI")) else None),
-                "lon": (float(r.get("LONGITUD_TUI")) if pd.notna(r.get("LONGITUD_TUI")) else None),
-            }
-        )
-
-
-    # 4) Catálogo para concurrencia (sirva haya CSV o no)
-    catalog_rows = []
-    for r in csv_context:
-        catalog_rows.append({
-            "nombre": r.get("nombre",""),
-            "place_id": r.get("place_id","") or "",
-            "lat": r.get("lat"),
-            "lon": r.get("lon"),
+        csv_context.append({
+            "place_id": pid,
+            "nombre": r.get("NOMBRE_TUI", ""),
+            "tipo": r.get("TIPOS_TUI", ""),
+            "direccion": r.get("DIRECCION", r.get("DIRECCION_TUI", "")),
+            "telefono": r.get("TELEFONO", ""),
+            "web": r.get("WEBSITE", "") or "",
+            "mapa": r.get("URL", "") or "",
+            "horario": horario or "Horarios no disponibles; verifica la web oficial del sitio.",
+            "rating": (float(r.get("_RATING")) if pd.notna(r.get("_RATING")) else None),
+            "reseñas": (int(r.get("TOTAL_VALORACIONES_TUI")) if str(r.get("TOTAL_VALORACIONES_TUI", "")).isdigit() else None),
+            "lat": (float(r.get("LATITUD_TUI")) if pd.notna(r.get("LATITUD_TUI")) else None),
+            "lon": (float(r.get("LONGITUD_TUI")) if pd.notna(r.get("LONGITUD_TUI")) else None),
         })
+
+    # --- 4) Catálogo para coreferencias/concurrencia ---
+    catalog_rows = [{"nombre": r.get("nombre",""), "place_id": r.get("place_id","") or "", "lat": r.get("lat"), "lon": r.get("lon")} for r in csv_context]
     _conv_set_catalog(conversation_id, catalog_rows)
 
-    # 5) Prompt reforzado (detalle uniforme y comprensión del historial)
+    # --- 5) Prompt (system) + historial compacto ---
     user_name = current_user.username if current_user and current_user.is_authenticated else ""
-
     overview_intro = (
         f"Hola **{user_name}** 👋\n"
         "Vista general narrativa y conversacional para Madrid:\n"
@@ -1204,8 +1207,7 @@ def chat():
         "- Tono cálido y cercano, estilo guía local.\n"
     )
 
-    # === NUEVO: historial compacto + catálogo reciente ===
-    historial_compacto = _compact_history(messages, max_turns=30, max_chars=6000)
+    historial_compacto = _compact_history(messages, max_turns=60, max_chars=12000)
     catalogo_coref = _catalog_for_coref(conversation_id)
 
     system = (
@@ -1214,42 +1216,35 @@ def chat():
         "- No inventes teléfonos ni precios exactos. Puedes dar rangos o recomendaciones prudentes.\n\n"
         "Intención por turno (reglas duras):\n"
         "1) Genera un **PLAN** solo si el mensaje ACTUAL contiene sinónimos de plan (plan, itinerario, ruta, agenda, programa, planning, cronograma, schedule, tour, recorrido, itinerary, propuesta, timeline).\n"
-        "2) Si el usuario hace un **follow‑up** (p. ej., “respecto a lo anterior”, “sobre lo anterior”, “lo de antes”) y NO pide plan explícitamente, responde en **modo INFO** (concurrente) sin crear un plan nuevo.\n"
+        "2) Si el usuario hace un **follow-up** y NO pide plan explícitamente, responde en **modo INFO** (concurrente) sin crear un plan nuevo.\n"
         "3) Si pide **info general**, responde en modo INFO.\n\n"
         "Comprensión del **contexto conversacional** (precisión):\n"
-        "- Recibirás `historial_compacto` con los últimos turnos y `catalogo_reciente` (ítems con `idx`, `nombre`, `place_id`).\n"
-        "- Si la consulta actual apunta a algo mencionado antes (por nombre, por `idx` del listado anterior, o por referencia ambigua tipo “el segundo”, “el del parque”, “el museo”), **resuelve la referencia** usando `catalogo_reciente` y responde sobre ese ítem concreto.\n"
-        "- Si hay ambigüedad entre varios ítems, **elige el más probable** según el historial y la intención; SOLO si la ambigüedad hace insegura la recomendación, formula **una única pregunta de desambiguación muy breve** y a la vez ofrece la **mejor respuesta provisional** con supuestos explícitos.\n"
-        "- Mantén la continuidad: respeta preferencias del usuario detectadas en el historial (horarios, presupuesto, zonas, accesibilidad, 'abierto ahora').\n"
-        "- Si el usuario pide 'más detalles' sobre algo ya mostrado, amplía con contexto útil (cómo llegar, mejores horas, tiempo típico en visita, alternativas cercanas, tips) sin repetir largos bloques ya dados.\n\n"
+        "- Recibirás `historial_compacto` y `catalogo_reciente` (ítems con `idx`, `nombre`, `place_id`).\n"
+        "- Si la consulta actual apunta a algo mencionado antes (por nombre, por `idx` del listado anterior, o por referencia ambigua tipo “el segundo”), **resuelve la referencia** usando `catalogo_reciente`.\n"
+        "- Si hay ambigüedad entre varios ítems, elige el más probable; SOLO si la ambigüedad hace insegura la recomendación, formula **una única** pregunta breve y ofrece **la mejor respuesta provisional**.\n"
+        "- Mantén continuidad: respeta preferencias del historial (horarios, presupuesto, zonas, accesibilidad, 'abierto ahora').\n\n"
         "Formato y nivel de detalle (consistencia):\n"
-        "- **PLAN**: 5–7 paradas; intervalos HH:MM–HH:MM; orden lógico; trayectos sugeridos (a pie/metro/bus con tiempos estimados). Cada parada debe tener el **mismo nivel de detalle** que en INFO: nombre, breve descripción, dirección, horario (o 'Horarios no disponibles; verifica la web oficial'), web oficial (WEBSITE) y enlace a mapa (URL), accesibilidad si está en CSV.\n"
-        "- **INFO**: listado ≤10 con bullets y el mismo detalle de arriba.\n"
-        "- Si preguntan CÓMO LLEGAR: rutas típicas (metro/bus/a pie), nodos de referencia y tiempos estimados.\n\n"
-        "Reglas de datos y coherencia:\n"
-        "- Valida coherencia del CSV con la consulta. Si es insuficiente o no encaja, entrega una respuesta útil basada en conocimiento general **sin mencionar el CSV**. En ese caso, asume que el cliente no verá place_ids.\n"
-        "- Nunca declares explícitamente “no tengo datos del CSV”.\n"
-        "- Iconografía: usa ⏰ 🎯 🗺️ 🌐 📞 🦽 🍽️ 🚇 🚌 🚶 💡 ✨ 💶 🌦️ cuando ayude a la lectura."
-        "➡️ **Al FINAL** de la respuesta, incluye un bloque JSON dentro de etiquetas <pins>...</pins> con los índices seleccionados del `contexto_csv`:\n"
-        "<pins>\n"
-        "{ \"selected_idx\": [1,2,3] }\n"
-        "</pins>\n"
-        "- Si no usaste `contexto_csv`, devuelve `<pins>{\"selected_idx\": []}</pins>`.\n"
-        "- No expliques este bloque ni añadas texto entre las etiquetas."
+        "- **PLAN**: 5–7 paradas; intervalos HH:MM–HH:MM; orden lógico; trayectos sugeridos (a pie/metro/bus). Cada parada: nombre, breve descripción, dirección, horario (o aviso), web oficial y enlace a mapa; accesibilidad si está en CSV.\n"
+        "- **INFO**: listado ≤10 con bullets y el mismo detalle.\n"
+        "- Si preguntan CÓMO LLEGAR: rutas (metro/bus/a pie) y tiempos estimados.\n\n"
+        "Reglas de datos:\n"
+        "- Valida coherencia del CSV; si no encaja, responde útil sin mencionar el CSV.\n"
+        "- Iconos cuando ayuden: ⏰ 🎯 🗺️ 🌐 📞 🦽 🍽️ 🚇 🚌 🚶 💡 ✨ 💶 🌦️.\n"
+        "➡️ **Al FINAL** incluye un bloque JSON dentro de <pins>...</pins> con los índices del `contexto_csv` usado, p.ej. <pins>{\"selected_idx\":[1,2,3]}</pins>. Si no usaste CSV, devuelve <pins>{\"selected_idx\":[]}</pins>.\n"
     )
 
-
+    # --- 6) Payload al modelo (con fecha/TZ) ---
     user_block = {
         "modo": "overview" if bootstrap else "normal",
         "intent": intent,
         "instrucciones_overview": overview_intro if bootstrap else None,
         "consulta_usuario": user_latest,
         "hora_inicio": start_time,
-        "coords_usuario": f"{start_lat},{start_lon}"
-        if (start_lat is not None and start_lon is not None)
-        else None,
-        "historial_compacto": historial_compacto,   # <--- NUEVO
-        "catalogo_reciente": catalogo_coref,        # <--- NUEVO
+        "fecha_hoy": now_dt.strftime("%Y-%m-%d"),
+        "tz": "Europe/Madrid",
+        "coords_usuario": f"{start_lat},{start_lon}" if (start_lat is not None and start_lon is not None) else None,
+        "historial_compacto": historial_compacto,
+        "catalogo_reciente": catalogo_coref,
         "contexto_csv": csv_context,
     }
 
@@ -1257,25 +1252,23 @@ def chat():
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(user_block, ensure_ascii=False)},
     ]
-    reply = _llm(msgs, temperature=0.6, max_tokens=4000)
-    
-   
+    reply = _llm(msgs, temperature=0.6, max_tokens=2000)
 
-    # --- Alineación mapa ↔️ chat basada en <pins> ---
-    catalog_recent = _conv_get_catalog(conversation_id)  # ya creado desde csv_context
+    # --- 7) Alineación mapa ↔️ chat en base a <pins> ---
+    catalog_recent = _conv_get_catalog(conversation_id)
     selected_idx = _parse_selected_idx(reply)
-    
+
     if used_csv:
         if not selected_idx:
-            # Fallback: intenta inferir por numeración 1., 2., 3. dentro del texto
+            # Fallback: detecta numeraciones 1., 2., 3. si el modelo no devolvió <pins>
             found = re.findall(r"(?m)^\s*(\d{1,2})[)\.\-]\s", reply)
             try_idx = [int(x) for x in found if x.isdigit()]
             try_idx = [i for i in try_idx if 1 <= i <= len(catalog_recent)]
             selected_idx = try_idx
-    
+
         place_ids_for_map = _idx_to_place_ids(selected_idx, catalog_recent) if selected_idx else []
         _conv_publish_map_ids(conversation_id, place_ids_for_map)
-    
+
         LAST_PLAN[conversation_id] = {
             "place_ids": list(place_ids_for_map),
             "names": [
@@ -1288,8 +1281,8 @@ def chat():
     else:
         # Sin CSV no publicamos pins aunque el LLM escriba generalidades
         _conv_publish_map_ids(conversation_id, [])
-    
-    # Limpia el bloque <pins> del texto antes de devolverlo al usuario
+
+    # --- 8) Limpieza y persistencia ligera ---
     reply_clean = _strip_pins_block(reply)
 
     if current_user.is_authenticated:
@@ -1299,9 +1292,9 @@ def chat():
             messages,
             reply_clean
         )
+
     return jsonify({
         "response": reply_clean,
-        # para facilitar el front: devolvemos también los ids publicados
         "place_ids": _conv_get(conversation_id).get("last_map_ids", []),
         "used_csv": used_csv
     })

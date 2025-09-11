@@ -28,38 +28,38 @@ git commit -m "escribimos_que_hemos_cambiado"
 git push origin nombre_rama
 
 ###########################################################
-INSTRUCCIONES NUEVAS CON RENDER
-Primer arranque “de cero”
+INSTRUCCIONES NUEVAS CON RENDER PRIMER ARRANQUE DESDE 0
 cd C:\ruta\SmartCityTour_
 conda create --name turismo python=3.10 -y
 conda activate turismo
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 
-conda env config vars set FLASK_APP=app FLASK_DEBUG=1 DATASET_TUI=data/BBDD_TUI.csv
+# Solo la PRIMERA VEZ que configuras este entorno en este equipo:
+conda env config vars set FLASK_APP=app FLASK_DEBUG=1 DATASET_TUI=data/BBDD_TUI.csv `
+    DATABASE_URL="postgresql://smart_user:JfDFCcdRrilfQCx9eVtEdsCralEFJDoF@dpg-d2tcmuvfte5s73a3ueh0-a.frankfurt-postgres.render.com/smartcitytour"
 conda deactivate & conda activate turismo
+
+# solo cuando cambias models.py
 flask --app app db migrate -m "add conversations table"
+flask --app app db migrate -m "initial tables"
+flask --app app db migrate -m "widen text columns for long urls"
 flask --app app db migrate -m "schema update"
+# (Una vez por equipo o cuando haya migraciones nuevas en el repo)
 flask --app app db upgrade
+
+# solo cuando cambias load_tui.py o mapa_madrid.py
 python scripts\load_tui.py
 python scripts\mapa_madrid.py
 flask --app app --debug run
 
 
-Arranque del día a día (sin cambios de modelos/datos)
+ARRANQUE DEL DIA A DIA (sin cambios de modelos/datos)
 cd C:\ruta\SmartCityTour_
 conda activate turismo
 flask --app app --debug run
 
 
-Si cambiaste models.py
-conda activate turismo
-flask --app app db migrate -m "update schema"
-flask --app app db upgrade
-Si cambiaste el CSV o los scripts de datos/mapa
-conda activate turismo
-python scripts\load_tui.py
-python scripts\mapa_madrid.py
 
 ###########################################################
 
