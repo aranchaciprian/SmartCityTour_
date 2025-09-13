@@ -1,7 +1,13 @@
-﻿Instrucciones para subir cambios al git 
+Instrucciones para subir cambios al git 
 
 cd ruta_donde_queramos_guardar_la_carpeta
+
+# PC:
 git clone https://github.com/aranchaciprian/SmartCityTour_.git
+# Mac:
+git clone https://github.com/aranchaciprian/SmartCityTour_
+
+
 LUEGO MODIFICAMOS LO QUE SEA DE LA CARPETA
 cd SmartCityTour_
 git checkout -b nombre_rama
@@ -14,28 +20,53 @@ git push origin nombre_rama
 ###########################################################
 INSTRUCCIONES NUEVAS CON RENDER PRIMER ARRANQUE DESDE 0 DESDE ANACONDA PROMPT
 # Primero te descargas el repositorio, ósea la carpeta SmartCityTour en algún lugar de tu ordenador
-# te copias la ruta donde hayas descargado la carpeta SmartCityTour 
+# te copias la ruta donde hayas descargado la carpeta SmartCityTour
 # te vas a anaconda prompt y pones cd ruta que has copiado (como en la primera linea) y la das a enter
-# Luego, el resto de líneas incluida flask --app ..., las copias todas y las pegas tal cual en el Anaconda Prompt
+# Luego, el resto de líneas incluida flask --app ..., las copias todas y las pegas tal cual en el Anaconda Prompt.
+# En Mac no hace falta usar Anaconda Prompt, vale con ejecutar los comandos directamente en la Terminal.
 
 cd C:\ruta\SmartCityTour_
+
+# PC:
 conda create --name turismo python=3.10 -y
 conda activate turismo
+# Mac:
+python3 -m venv turismo
+source turismo/bin/activate
+
+
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m flask --app app db upgrade
+
+
+# PC:
 python scripts\load_tui.py
 python scripts\mapa_madrid.py
+# Mac:
+python scripts/load_tui.py
+python scripts/mapa_madrid.py
+
+
 python -m flask --app app --debug run
 
 #Cuando se termine de ejecutar la ultima linea, te aparece algo como: http://127.0.0.1:5000/ 
 #Copias todo esto: http://127.0.0.1:5000/ y lo pegas en el navegador y te sale la plataforma
 
 
+
+
 INSTRUCCIONES VALIDAS ARRENQUE DESDE 0 SI CAMBIO MIGRACIONES
 cd C:\ruta\SmartCityTour_
+
+# PC:
 conda create --name turismo python=3.10 -y
 conda activate turismo
+# Mac:
+python3 -m venv turismo
+source turismo/bin/activate
+
+
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 flask --app app db migrate -m "add conversations table"
@@ -43,14 +74,30 @@ flask --app app db migrate -m "initial tables"
 flask --app app db migrate -m "widen text columns for long urls"
 flask --app app db migrate -m "schema update"
 flask --app app db upgrade
+
+
+# PC:
 python scripts\load_tui.py
 python scripts\mapa_madrid.py
+# Mac:
+python scripts/load_tui.py
+python scripts/mapa_madrid.py
+
+
 flask --app app --debug run
+
+
 
 
 ARRANQUE DEL DIA A DIA (sin cambios de modelos/datos/ni python)
 cd C:\ruta\SmartCityTour_
+
+# PC:
 conda activate turismo
+# Mac:
+source turismo/bin/activate
+
+
 flask --app app --debug run
 
 
