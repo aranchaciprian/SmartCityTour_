@@ -562,6 +562,8 @@ let chatFilter = {
   names: [],
 };
 
+let strictChatMode = false;
+
 /* Extraer place_id de gmaps_url como respaldo */
 function extractPlaceIdFromUrl(url){
   if(!url) return null;
@@ -760,6 +762,12 @@ withMap((map)=>{
   }
 
   async function fetchAndRender(){
+
+    if (strictChatMode) {
+    applyFilters();
+    return;
+    }
+
     const b = map.getBounds();
     const url = `/api/poi?south=${b.getSouth()}&west=${b.getWest()}&north=${b.getNorth()}&east=${b.getEast()}&zoom=${map.getZoom()}`;
     const res = await fetch(url);
@@ -775,8 +783,29 @@ withMap((map)=>{
     refreshFavoritesLayer();
   }
 
+    async function fetchStrictByPlaceIds(ids){
+  const list = (ids || []).filter(Boolean);
+  if (!list.length) return;
+
+  // Construye query sin romper las comas
+  const qs = list.map(encodeURIComponent).join(",");
+  const url = `/api/poi?strict=1&place_ids=${qs}`;
+
+  const res = await fetch(url);
+  const data = await res.json();
+
+  // Crea marcadores solo para estos registros (si no existían ya)
+  for (const rec of data){
+    if (!loaded.has(rec.id)) {
+      loaded.add(rec.id);
+      createMarker(rec);
+    }
+  }
+  applyFilters();
+}
+
   function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
-  map.on('moveend', debounce(fetchAndRender, 250));
+  map.on('moveend', debounce(()=>{ if (!strictChatMode) fetchAndRender(); }, 250));
 
   // Cargar favoritos del servidor ANTES de pintar
   initFavorites().then(()=> fetchAndRender());
@@ -1432,16 +1461,27 @@ function applyFilters(){
   } catch(e){}
 
   // 3) Último fallback: geolocalización del navegador
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        const { latitude, longitude, accuracy } = pos.coords;
-        putUserPin(latitude, longitude, accuracy);
-      },
-      () => {},
-      { enableHighAccuracy: true, maximumAge: 30000, timeout: 5000 }
-    );
-  }
+ if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      putUserPin(latitude, longitude, accuracy);
+
+      // 👇 centra el mapa (mantén al menos zoom 14)
+      try { map.setView([latitude, longitude], Math.max(map.getZoom() || 0, 14)); } catch {}
+
+      // 👇 opcional: recuerda coords para próximos arranques
+      try {
+        localStorage.setItem("client_coords", JSON.stringify({
+          lat: latitude, lon: longitude, accuracy, ts: Date.now()
+        }));
+      } catch {}
+    },
+    () => {},
+    { enableHighAccuracy: true, maximumAge: 30000, timeout: 5000 }
+  );
+}
+
   
  function hydrateNamesFromMarkersByIds(ids){
   const out = [];
@@ -1457,7 +1497,6 @@ function applyFilters(){
   }
   return out;
 }
-
 window.addEventListener("message", (ev)=>{
   const data = ev?.data || {};
   if (data.type === "SCT_APPLY_CHAT_FILTER"){
@@ -1474,24 +1513,27 @@ window.addEventListener("message", (ev)=>{
     if (chk) chk.checked = true;
 
     renderChatPanel();
-    applyFilters();
 
-    // centrar vista a los puntos (por IDs; fallback por nombre)
-    const targets = [];
-    for (const mk of allMarkers){
-      if (chatFilter.placeIds.has(mk._placeId)) targets.push(mk.getLatLng());
-    }
-    if (!targets.length && chatFilter.names.length) {
-      for (const mk of allMarkers) {
-        const nm = (mk._rec?.name || "").toLowerCase();
-        if (chatFilter.names.some(q => nm.includes(String(q).toLowerCase()))) {
-          targets.push(mk.getLatLng());
+    // ⬇️ NUEVO: toggle modo estricto y carga por place_id
+    strictChatMode = chatFilter.placeIds.size > 0;
+
+    (async () => {
+      if (strictChatMode) {
+        await fetchStrictByPlaceIds([...chatFilter.placeIds]);
+        // centra a los resultados estrictos
+        const targets = [];
+        for (const mk of allMarkers){
+          if (chatFilter.placeIds.has(mk._placeId)) targets.push(mk.getLatLng());
         }
+        if (targets.length){
+          try { map.fitBounds(L.latLngBounds(targets), { padding:[50,50] }); } catch {}
+        }
+      } else {
+        // sale del modo estricto → vuelve al incremental
+        await fetchAndRender();
       }
-    }
-    if (targets.length){
-      try { map.fitBounds(L.latLngBounds(targets), { padding:[50,50] }); } catch {}
-    }
+      applyFilters();
+    })();
   }
 });
 

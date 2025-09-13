@@ -28,7 +28,6 @@ import threading
 
 import difflib
 import pandas as pd
-import pytz
 from dotenv import load_dotenv
 from flask import (
     Flask,
@@ -67,7 +66,6 @@ try:
     from zoneinfo import ZoneInfo  # Python 3.9+
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # (raro en 3.10, pero por si acaso)
-
 MAD_TZ = ZoneInfo("Europe/Madrid")
 
 def _parse_hhmm(hhmm: str):
@@ -139,8 +137,8 @@ def inject_build_version():
 
 # --- OpenAI / Zona horaria ---
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-MAD_TZ = pytz.timezone("Europe/Madrid")
 
+DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5")
 
 # ======================
 # Utilidades: texto / fuzzy
@@ -633,26 +631,42 @@ def extract_area_from_query(q: str) -> str:
 # ======================
 # Búsqueda (rating como desempate) + boost por n-gramas
 # ======================
+def _sort_by_rating_then_reviews(df_in: pd.DataFrame) -> pd.DataFrame:
+    out = df_in.copy()
+    # Asegura columnas numéricas
+    if "_RATING" not in out.columns and "RATING_TUI" in out.columns:
+        rnum = out["RATING_TUI"].apply(clean_decimal_comma)
+        out["_RATING"] = pd.to_numeric(rnum, errors="coerce")
+    if "TOTAL_VALORACIONES_TUI" in out.columns:
+        out["_R_REV"] = pd.to_numeric(out["TOTAL_VALORACIONES_TUI"], errors="coerce").fillna(0)
+    else:
+        out["_R_REV"] = 0
+
+    # Orden: rating (NaN al final), luego reviews
+    # Truco: crear clave de orden que ponga NaN al final
+    rating = out["_RATING"]
+    out["_RATING_ORDER"] = rating.fillna(-1e9)  # NaN se van al final
+    out = out.sort_values(by=["_RATING_ORDER", "_R_REV"], ascending=[False, False])
+    return out.drop(columns=["_RATING_ORDER"], errors="ignore")
+
+
 def buscar_top(pregunta: str, max_resultados: int = 60) -> pd.DataFrame:
-    """Construye resultados candidatos a partir del CSV con scoring textual."""
+    """
+    Ranking dominado por relevancia textual.
+    - rating/reseñas solo como desempate suave (NaN en rating = neutral, no penaliza).
+    - mantiene filtro de área por dirección si se detecta en la query.
+    """
     if df.empty:
         return df.head(0)
 
     q = (pregunta or "").strip()
     q_tokens = tokenize_query(q)
-    if not q_tokens:
-        return df.head(max_resultados)
 
-    area = extract_area_from_query(q)
+    # Base + filtro de área por dirección
     base = df.copy()
-
-    # Filtro por área en dirección (si hay match)
+    area = extract_area_from_query(q)
     if area:
-        dir_col = (
-            "DIRECCION"
-            if "DIRECCION" in base.columns
-            else ("DIRECCION_TUI" if "DIRECCION_TUI" in base.columns else None)
-        )
+        dir_col = "DIRECCION" if "DIRECCION" in base.columns else ("DIRECCION_TUI" if "DIRECCION_TUI" in base.columns else None)
         if dir_col:
             patt = re.escape(norm_text(area))
             addr_norm = base[dir_col].astype(str).apply(norm_text)
@@ -660,53 +674,93 @@ def buscar_top(pregunta: str, max_resultados: int = 60) -> pd.DataFrame:
             if mask.any():
                 base = base.loc[mask]
 
-    ngrams = set(build_ngrams(q_tokens, 2, 3))
+    # --- Scoring textual (TIPOS_TUI + nombre), con boost por n-gramas
+    if q_tokens:
+        ngrams = set(build_ngrams(q_tokens, 2, 3))
+        def row_score(row) -> int:
+            s = 0
+            hay_tipo = " ".join(row.get("_TOK_TYPES", []))
+            name = str(row.get("NOMBRE_TUI", ""))
+            # tokens
+            for t in q_tokens:
+                if re.search(rf"\b{re.escape(t)}\b", hay_tipo): s += 6
+                if re.search(rf"\b{re.escape(t)}\b", name, re.I): s += 5
+            # n-gramas exactos
+            join_all = f"{hay_tipo} {norm_text(name)}"
+            for g in ngrams:
+                if f" {g} " in f" {join_all} ": s += 7
+            return s
 
-    def row_score(row) -> int:
-        s = 0
-        hay_tipo = " ".join(row.get("_TOK_TYPES", []))
-        hay_cat = " ".join(row.get("_TOK_CATEG", []))
-        name = str(row.get("NOMBRE_TUI", ""))
-        search_all = " ".join([hay_tipo, hay_cat, norm_text(name)])
-        for t in q_tokens:
-            if re.search(rf"\b{re.escape(t)}\b", hay_tipo):
-                s += 5
-            if re.search(rf"\b{re.escape(t)}\b", hay_cat):
-                s += 3
-            if re.search(rf"\b{re.escape(t)}\b", name, re.I):
-                s += 4
-        for g in ngrams:  # boost frases exactas
-            if f" {g} " in f" {search_all} ":
-                s += 6
-        return s
-
-    base["__score"] = base.apply(row_score, axis=1)
-    hits = base.loc[base["__score"] > 0].copy()
-
-    if hits.empty:
-        def fuzzy_points(row) -> int:
-            points = 0
-            nm = str(row.get("NOMBRE_TUI", ""))
-            if any(similar(nm, t) >= 0.75 for t in q_tokens):
-                points += 4
-            return points
-
-        base["__score"] = base.apply(fuzzy_points, axis=1)
+        base["__score"] = base.apply(row_score, axis=1)
         hits = base.loc[base["__score"] > 0].copy()
 
-    if not hits.empty:
-        if "_RATING" in hits.columns:
-            hits["_R_REV"] = pd.to_numeric(
-                hits.get("TOTAL_VALORACIONES_TUI"), errors="coerce"
-            ).fillna(0)
-            hits = hits.sort_values(
-                ["__score", "_RATING", "_R_REV"], ascending=[False, False, False]
-            )
-        else:
-            hits = hits.sort_values(["__score", "NOMBRE_TUI"], ascending=[False, True])
-        return hits.head(max_resultados)
+        # Fuzzy si no hubo hits
+        if hits.empty:
+            def fuzzy_points(row) -> int:
+                nm = str(row.get("NOMBRE_TUI", ""))
+                return 4 if any(similar(nm, t) >= 0.75 for t in q_tokens) else 0
+            base["__score"] = base.apply(fuzzy_points, axis=1)
+            hits = base.loc[base["__score"] > 0].copy()
+    else:
+        # Sin tokens => todo el DF, score 0 (se decidirá por rating/reseñas muy suave)
+        base["__score"] = 0
+        hits = base.copy()
 
-    return df.head(0)
+    candidates = hits if not hits.empty else df.copy()
+
+    # --- Normalizaciones (sin castigar NaN)
+    # rating → [0..1]; NaN = 0.55 (neutro)
+    if "_RATING" not in candidates.columns and "RATING_TUI" in candidates.columns:
+        rnum = candidates["RATING_TUI"].apply(clean_decimal_comma)
+        candidates["_RATING"] = pd.to_numeric(rnum, errors="coerce")
+    rating = pd.to_numeric(candidates.get("_RATING"), errors="coerce")
+    rating_norm = (rating / 5.0).clip(0, 1).fillna(0.55)
+
+    # reseñas → [0..1] con compresión (potencia 0.3)
+    reviews = pd.to_numeric(candidates.get("TOTAL_VALORACIONES_TUI"), errors="coerce").fillna(0)
+    rev_max = float(reviews.max() or 1.0)
+    reviews_norm = (reviews / rev_max) ** 0.3
+
+    # texto → [0..1]
+    text = pd.to_numeric(candidates.get("__score"), errors="coerce").fillna(0)
+    txt_max = float(text.max() or 1.0)
+    text_norm = text / txt_max
+
+    # boost por coincidencia exacta de nombre con la consulta
+    q_norm = norm_text(q)
+    names_norm = candidates.get("NOMBRE_TUI", pd.Series("", index=candidates.index)).astype(str).apply(norm_text)
+    exact_name = (names_norm == q_norm).astype(float)
+
+    # --- Ranking compuesto (texto domina; rating suave; NaN = neutro)
+    candidates["__rank"] = (
+        text_norm * 0.75 +
+        rating_norm * 0.15 +
+        reviews_norm * 0.10 +
+        exact_name * 0.10
+    )
+
+    candidates = candidates.sort_values(
+        by=["__rank", "TOTAL_VALORACIONES_TUI"], ascending=[False, False]
+    )
+
+    # Asegura mínimo 4 resultados
+    if len(candidates) < 4:
+        rest = df.loc[~df.index.isin(candidates.index)].copy()
+        # orden de respaldo por rating/reseñas muy suave
+        if "_RATING" not in rest.columns and "RATING_TUI" in rest.columns:
+            rnum = rest["RATING_TUI"].apply(clean_decimal_comma)
+            rest["_RATING"] = pd.to_numeric(rnum, errors="coerce")
+        r2 = pd.to_numeric(rest.get("_RATING"), errors="coerce")
+        r2n = (r2 / 5.0).clip(0, 1).fillna(0.55)
+        rv2 = pd.to_numeric(rest.get("TOTAL_VALORACIONES_TUI"), errors="coerce").fillna(0)
+        rv2n = (rv2 / float(rv2.max() or 1.0)) ** 0.3
+        rest["__rank"] = r2n * 0.6 + rv2n * 0.4
+        rest = rest.sort_values("__rank", ascending=False)
+        candidates = pd.concat([candidates, rest], ignore_index=False)
+
+    return candidates.head(max_resultados)
+
+
 
 
 # ======================
@@ -760,28 +814,33 @@ def _filter_by_radius_km(df_in: pd.DataFrame, user_lat: Any, user_lon: Any, radi
 
 
 def _boost_recent_by_conv(df_in: pd.DataFrame, conversation_id: str, boost: float = 0.6) -> pd.DataFrame:
-    """Rerank suave: si el PLACE_ID estuvo recientemente en la misma conversación, sube un poco."""
+    """Rerank suave: prioriza vistos recientemente; rating/reseñas y proximidad con peso bajo y sin penalizar NaN."""
     if df_in is None or df_in.empty or "PLACE_ID" not in df_in.columns:
         return df_in
     recent = set(_conv_recent_ids(conversation_id))
     out = df_in.copy()
-    # base score: rating y reseñas
-    if "_RATING" in out.columns:
-        out["_R_REV"] = pd.to_numeric(out.get("TOTAL_VALORACIONES_TUI"), errors="coerce").fillna(0)
-        base = (out["_RATING"].fillna(0) + (out["_R_REV"] / (out["_R_REV"].max() or 1 + 1e-9))*0.2)
-    else:
-        base = pd.Series(0, index=out.index)
+
+    # rating (NaN => mediana) + reseñas comprimidas
+    r = pd.to_numeric(out.get("_RATING"), errors="coerce")
+    r_fill = r.fillna(r.median() if pd.notna(r.median()) else 3.8)
+    r_norm = (r_fill / 5.0).clip(0, 1)
+
+    rv = pd.to_numeric(out.get("TOTAL_VALORACIONES_TUI"), errors="coerce").fillna(0)
+    rv_norm = (rv / float(rv.max() or 1.0)) ** 0.3
 
     # proximidad si existe
     if "_DIST_KM" in out.columns:
-        prox = (out["_DIST_KM"].max() - out["_DIST_KM"]) / (out["_DIST_KM"].max() or 1 + 1e-9)
+        prox = (out["_DIST_KM"].max() - out["_DIST_KM"]) / float(out["_DIST_KM"].max() or 1.0)
     else:
         prox = 0
 
     recent_mask = out["PLACE_ID"].astype(str).isin(recent)
-    out["__rerank"] = base + prox + (recent_mask.astype(float) * boost)
+
+    # peso MUY suave: que la conversación “sume”, sin desordenar por completo
+    out["__rerank"] = (r_norm * 0.20) + (rv_norm * 0.10) + (prox * 0.10) + (recent_mask.astype(float) * boost)
     out = out.sort_values(["__rerank", "NOMBRE_TUI"], ascending=[False, True])
     return out
+
 
 
 # ======================
@@ -964,14 +1023,55 @@ def try_fetch_hours_from_web(row: pd.Series) -> Optional[str]:
 def _llm(
     messages: List[Dict[str, str]],
     model: Optional[str] = None,
-    temperature: float = 0.6,
     max_tokens: int = 8000,
 ) -> str:
-    mdl = model or os.getenv("OPENAI_MODEL", "gpt-4o")
-    resp = client.chat.completions.create(
-        model=mdl, messages=messages, temperature=temperature, max_tokens=max_tokens
+    """
+    Llama a GPT-5 mediante Responses API con:
+      - reasoning.effort = "low"
+      - text.verbosity  = "low"
+    """
+    mdl = model or DEFAULT_MODEL
+
+    # 1) Extrae el primer 'system' (si existe) y reetiquétalo como 'developer'
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    system_text = system_msgs[0]["content"] if system_msgs else ""
+
+    # 2) Resto de mensajes (user/assistant)
+    convo_msgs = []
+    for m in messages:
+        if m.get("role") == "system":
+            continue
+        convo_msgs.append({"role": m["role"], "content": m.get("content", "")})
+
+    # 3) Construye el input final
+    input_payload: List[Dict[str, str]] = []
+    if system_text:
+        input_payload.append({"role": "developer", "content": system_text})
+    input_payload.extend(convo_msgs)
+
+    # 4) Llamada a Responses API (sin temperature)
+    resp = client.responses.create(
+        model=mdl,
+        input=input_payload,
+        max_output_tokens=max_tokens,
+        reasoning={"effort": "low"},
+        text={"verbosity": "low"},
     )
-    return resp.choices[0].message.content.strip()
+
+    # 5) Extrae texto
+    try:
+        out = getattr(resp, "output_text", None)
+        if out:
+            return out.strip()
+        parts = []
+        for item in getattr(resp, "output", []) or []:
+            for c in getattr(item, "content", []) or []:
+                if getattr(c, "type", None) == "output_text":
+                    parts.append(getattr(c, "text", "") or "")
+        return "".join(parts).strip() if parts else ""
+    except Exception:
+        return str(resp)
+
 
 
 # ======================
@@ -1077,6 +1177,33 @@ def _strip_pins_block(text: str) -> str:
     return re.sub(r"\s*<pins>\s*(\{.*?\}|\[.*?\])\s*</pins>\s*$", "", text, flags=re.S)
 
 
+def _postprocess_chat_markup(text: str) -> str:
+    """Limpia meta-mensajes, fuerza negrita tras [n] y compacta saltos."""
+    if not isinstance(text, str):
+        return text or ""
+    out = text
+
+    # 1) Quitar cualquier rastro de “(no en listado CSV)” u otros avisos similares
+    out = re.sub(r"\(\s*no\s+en\s+listado\s+csv\s*\)", "", out, flags=re.I)
+    out = re.sub(r"\(\s*no\s+listado\s+csv\s*\)", "", out, flags=re.I)
+
+    # 2) Asegurar negrita en títulos: [n] Nombre → [n] **Nombre**
+    def _bold_title(m):
+        idx = m.group(1)
+        name = m.group(2).strip()
+        # si ya viene con **...**, respeta
+        if re.match(r"^\*\*.*\*\*$", name):
+            return f"[{idx}] {name}"
+        return f"[{idx}] **{name}**"
+    out = re.sub(r"(?m)^\s*\[(\d+)\]\s+([^\n]+)$", _bold_title, out)
+
+    # 3) Compactar saltos: elimina líneas en blanco dobles dentro de bloques
+    # (convierte saltos >=2 en un solo salto)
+    out = re.sub(r"\n{2,}", "\n", out)
+
+    # 4) Limpieza final de espacios sobrantes
+    return out.strip()
+
 # ======================
 # Rutas
 # ======================
@@ -1084,8 +1211,6 @@ def _strip_pins_block(text: str) -> str:
 @login_required
 def index():
     return render_template("index.html")
-
-
 @app.route("/chat", methods=["POST"])
 def chat():
     """Endpoint principal del chat (plan/info concurrente + comprensión del historial)."""
@@ -1114,7 +1239,7 @@ def chat():
     intent = _detect_intent(messages, conversation_id)
     _conv_update_last_intent(conversation_id, intent)
 
-    # Autoactivar "abierto ahora" si piden plan "hoy/ahora" (sin romper lo que venga del front)
+    # Autoactivar "abierto ahora" si piden plan "hoy/ahora"
     if not prefer_open and intent == "plan":
         q_norm_for_open = norm_text(user_latest)
         if ("hoy" in q_norm_for_open) or ("ahora" in q_norm_for_open):
@@ -1124,11 +1249,10 @@ def chat():
     hits = df.copy() if bootstrap else buscar_top(user_latest, max_resultados=60)
 
     if prefer_open:
-        # pista textual para el filtro de horarios
         user_latest = (user_latest + " abiertos ahora").strip()
     hits = _aplica_filtros(hits, user_latest, now_dt=now_dt)
 
-    # --- Proximidad / "cerca de mí" ---
+    # --- Proximidad ---
     q_norm = norm_text(user_latest)
     wants_near = any(w in q_norm for w in ["cerca", "alrededor", "cercano", "cercanos", "cercanas"])
     if start_lat is not None and start_lon is not None:
@@ -1139,7 +1263,7 @@ def chat():
     # --- Rerank por memoria de conversación ---
     hits = _boost_recent_by_conv(hits, conversation_id, boost=0.6)
 
-    # --- Deduplicado de hits ---
+    # --- Deduplicado ---
     if hits is not None and not hits.empty:
         if "PLACE_ID" in hits.columns:
             hits = hits.drop_duplicates(subset=["PLACE_ID"], keep="first")
@@ -1148,25 +1272,20 @@ def chat():
             if keys:
                 hits = hits.drop_duplicates(subset=keys, keep="first")
 
-    # --- 2) Coherencia CSV y selección top-N ---
-    coh = _coherence_score(hits)
-    used_csv = (not hits.empty) and (coh >= 0.3)
+    # --- 2) Selección top-N ---
+    n_target = _target_count_for_intent(intent, bootstrap)  # 6
+    used_csv = not hits.empty
+    top_rows = (hits if used_csv else df).head(n_target)
 
-    n_target = _target_count_for_intent(intent, bootstrap)  # ideal 6–6 para ahorrar tokens
-    top_rows = hits.head(n_target) if used_csv else hits.head(0)
-
-    # --- 3) Contexto CSV para el LLM ---
+    # --- 3) Contexto CSV para el LLM (solo filas con place_id) ---
     csv_context = []
     _seen_keys = set()
-
     for _, r in top_rows.iterrows():
-        horario = (r.get("HORARIO", "") or "").strip()
-        if not horario:
-            fetched = try_fetch_hours_from_web(r)
-            if fetched:
-                horario = fetched
-
         pid = (str(r.get("PLACE_ID")) if pd.notna(r.get("PLACE_ID")) else "") or ""
+        if not pid:
+            continue  # ← importante: solo catálogo "pin-publicable"
+        horario = (r.get("HORARIO", "") or "").strip() or "Horarios no disponibles; verifica la web oficial del sitio."
+
         fb_key = f"{norm_text(r.get('NOMBRE_TUI',''))}|{r.get('LATITUD_TUI')}|{r.get('LONGITUD_TUI')}"
         key = pid or fb_key
         if key in _seen_keys:
@@ -1181,59 +1300,61 @@ def chat():
             "telefono": r.get("TELEFONO", ""),
             "web": r.get("WEBSITE", "") or "",
             "mapa": r.get("URL", "") or "",
-            "horario": horario or "Horarios no disponibles; verifica la web oficial del sitio.",
+            "horario": horario,
             "rating": (float(r.get("_RATING")) if pd.notna(r.get("_RATING")) else None),
             "reseñas": (int(r.get("TOTAL_VALORACIONES_TUI")) if str(r.get("TOTAL_VALORACIONES_TUI", "")).isdigit() else None),
             "lat": (float(r.get("LATITUD_TUI")) if pd.notna(r.get("LATITUD_TUI")) else None),
             "lon": (float(r.get("LONGITUD_TUI")) if pd.notna(r.get("LONGITUD_TUI")) else None),
         })
 
-    # --- 4) Catálogo para coreferencias/concurrencia ---
+    # --- 4) Catálogo para coreferencias ---
     catalog_rows = [{"nombre": r.get("nombre",""), "place_id": r.get("place_id","") or "", "lat": r.get("lat"), "lon": r.get("lon")} for r in csv_context]
     _conv_set_catalog(conversation_id, catalog_rows)
 
-    # --- 5) Prompt (system) + historial compacto ---
+    # --- 5) Prompt + historial compacto ---
     user_name = current_user.username if current_user and current_user.is_authenticated else ""
     overview_intro = (
         f"Hola **{user_name}** 👋\n"
         "Vista general narrativa y conversacional para Madrid:\n"
         "- Recomienda una época del año y comenta brevemente la temporada actual (clima/afluencia).\n"
-        "- Overview con 2–3 frases por lugar (prioriza los del CSV; puedes añadir 1–2 sugerencias genéricas si faltan).\n"
+        "- Overview con 2–3 frases por lugar (prioriza los del CSV (lugares culturales); puedes añadir 1–2 sugerencias genéricas si faltan).\n"
         "- Ofrece 2–3 opciones temáticas (cultural, foodies, parques…).\n"
-        "- Consejos de ahorro (días gratuitos), mejores horas, alternativas por clima extremo.\n"
-        "- Cierra preguntando si quiere: **plan** (hoy/semanal) o **datos** generales.\n"
-        "Reglas:\n"
-        "- Evita datos sensibles exactos no confirmados (teléfono/precio exacto).\n"
-        "- Tono cálido y cercano, estilo guía local.\n"
+        "- Consejos de ahorro, mejores horas, alternativas por clima extremo.\n"
+        "- Cierra preguntando si quiere **plan** o **datos**.\n"
+        "Reglas: evita teléfonos/precios exactos no confirmados; tono guía local.\n"
     )
-
     historial_compacto = _compact_history(messages, max_turns=60, max_chars=12000)
     catalogo_coref = _catalog_for_coref(conversation_id)
 
     system = (
-        "Eres un asistente turístico local de Madrid. Objetivo: responder con precisión y mantener **concurrencia de chat**.\n"
-        "- Usa PRIMERO los lugares del CSV si son coherentes con la consulta; si no, responde con conocimiento general sin mencionar el CSV.\n"
-        "- No inventes teléfonos ni precios exactos. Puedes dar rangos o recomendaciones prudentes.\n\n"
-        "Intención por turno (reglas duras):\n"
-        "1) Genera un **PLAN** solo si el mensaje ACTUAL contiene sinónimos de plan (plan, itinerario, ruta, agenda, programa, planning, cronograma, schedule, tour, recorrido, itinerary, propuesta, timeline).\n"
-        "2) Si el usuario hace un **follow-up** y NO pide plan explícitamente, responde en **modo INFO** (concurrente) sin crear un plan nuevo.\n"
-        "3) Si pide **info general**, responde en modo INFO.\n\n"
-        "Comprensión del **contexto conversacional** (precisión):\n"
-        "- Recibirás `historial_compacto` y `catalogo_reciente` (ítems con `idx`, `nombre`, `place_id`).\n"
-        "- Si la consulta actual apunta a algo mencionado antes (por nombre, por `idx` del listado anterior, o por referencia ambigua tipo “el segundo”), **resuelve la referencia** usando `catalogo_reciente`.\n"
-        "- Si hay ambigüedad entre varios ítems, elige el más probable; SOLO si la ambigüedad hace insegura la recomendación, formula **una única** pregunta breve y ofrece **la mejor respuesta provisional**.\n"
-        "- Mantén continuidad: respeta preferencias del historial (horarios, presupuesto, zonas, accesibilidad, 'abierto ahora').\n\n"
-        "Formato y nivel de detalle (consistencia):\n"
-        "- **PLAN**: 5–7 paradas; intervalos HH:MM–HH:MM; orden lógico; trayectos sugeridos (a pie/metro/bus). Cada parada: nombre, breve descripción, dirección, horario (o aviso), web oficial y enlace a mapa; accesibilidad si está en CSV.\n"
-        "- **INFO**: listado ≤10 con bullets y el mismo detalle.\n"
-        "- Si preguntan CÓMO LLEGAR: rutas (metro/bus/a pie) y tiempos estimados.\n\n"
-        "Reglas de datos:\n"
-        "- Valida coherencia del CSV; si no encaja, responde útil sin mencionar el CSV.\n"
-        "- Iconos cuando ayuden: ⏰ 🎯 🗺️ 🌐 📞 🦽 🍽️ 🚇 🚌 🚶 💡 ✨ 💶 🌦️.\n"
-        "➡️ **Al FINAL** incluye un bloque JSON dentro de <pins>...</pins> con los índices del `contexto_csv` usado, p.ej. <pins>{\"selected_idx\":[1,2,3]}</pins>. Si no usaste CSV, devuelve <pins>{\"selected_idx\":[]}</pins>.\n"
+    "Eres un asistente turístico local de Madrid. Mantén concurrencia de chat.\n"
+    "- Usa lugares del CSV si encajan; si no, responde con conocimiento general.\n"
+    "- No inventes teléfonos/precios exactos. Usa `fecha_hoy` y `tz` para 'hoy/ahora'.\n\n"
+    "Intención por turno:\n"
+    "1) **PLAN** solo si el mensaje actual lo pide explícitamente.\n"
+    "2) Follow-up sin pedir plan → **INFO**.\n\n"
+    "Coreferencia:\n"
+    "- Recibirás `historial_compacto` y `catalogo_reciente` con `idx` y `place_id`.\n"
+    "- Si hay ambigüedad, 1 pregunta breve + mejor respuesta provisional.\n\n"
+    "Formato de salida (OBLIGATORIO y COMPACTO, sin líneas en blanco extra dentro de cada ficha):\n"
+    "- Enumera como `[n] **Nombre del lugar**` (el nombre SIEMPRE va en negrita).\n"
+    "- Luego, líneas con estos campos si existen: \n"
+    "  🏷️ {tipo o categoría}\n"
+    "  📍 {dirección/barrio/ciudad}\n"
+    "  ⏰ {horarios; si no hay: 'Horarios no disponibles; verifica la web o Maps'}\n"
+    "  🗺️ Google Maps: {si hay place_id -> 'https://www.google.com/maps/place/?q=place_id:{place_id}'; si no, 'busca “{nombre} Madrid”'}\n"
+    "  🌐 Web oficial: {si hay URL -> esa; si no -> 'busca “{nombre} web oficial”'}\n"
+    "  🦽 Accesibilidad: {SI/NO/—}\n"
+    "  ⭐ {rating (reseñas)}  (usa '—' si faltan)\n"
+    "- No dejes líneas en blanco entre las líneas de una misma ficha. Separa fichas con UNA sola línea en blanco.\n"
+    "- **Prohibido** revelar si un ítem proviene o no del CSV. No escribas textos como '(no en listado CSV)'.\n\n"
+    "Mapeo a mapa (OBLIGATORIO):\n"
+    "- Si usas lugares de `contexto_csv`, numéralos con su `idx`.\n"
+    "- Al final devuelve <pins>{\"selected_idx\":[...]}</pins> **solo** con idx del `contexto_csv` en el mismo orden de aparición.\n"
+    "- Si un lugar NO está en `contexto_csv`, NO lo incluyas en `selected_idx` (pero mantén su ficha con el formato arriba).\n"
     )
 
-    # --- 6) Payload al modelo (con fecha/TZ) ---
+
     user_block = {
         "modo": "overview" if bootstrap else "normal",
         "intent": intent,
@@ -1252,23 +1373,29 @@ def chat():
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(user_block, ensure_ascii=False)},
     ]
-    reply = _llm(msgs, temperature=0.6, max_tokens=2000)
+    reply = _llm(msgs, max_tokens=2000)
 
-    # --- 7) Alineación mapa ↔️ chat en base a <pins> ---
+    # --- 7) Alineación mapa ↔️ chat en base a <pins> (SOLO si hay idx seleccionados) ---
     catalog_recent = _conv_get_catalog(conversation_id)
     selected_idx = _parse_selected_idx(reply)
 
-    if used_csv:
-        if not selected_idx:
-            # Fallback: detecta numeraciones 1., 2., 3. si el modelo no devolvió <pins>
-            found = re.findall(r"(?m)^\s*(\d{1,2})[)\.\-]\s", reply)
-            try_idx = [int(x) for x in found if x.isdigit()]
-            try_idx = [i for i in try_idx if 1 <= i <= len(catalog_recent)]
-            selected_idx = try_idx
+    if not selected_idx:
+        # Fallback: 1), 2., 3- al inicio de línea
+        found = re.findall(r"(?m)^\s*(\d{1,2})[)\.\-]\s", reply)
+        try_idx = [int(x) for x in found if x.isdigit()]
+        selected_idx = [i for i in try_idx if 1 <= i <= len(catalog_recent)]
 
-        place_ids_for_map = _idx_to_place_ids(selected_idx, catalog_recent) if selected_idx else []
+    # Mapea índices → place_ids (únicos, preservando orden)
+    pid_by_idx = {it.get("idx"): (it.get("place_id") or "").strip() for it in catalog_recent}
+    place_ids_for_map = []
+    for i in selected_idx:
+        pid = pid_by_idx.get(i)
+        if pid and pid not in place_ids_for_map:
+            place_ids_for_map.append(pid)
+
+    # Publica pins SOLO si hay selección; si no, limpia para este caso
+    if place_ids_for_map:
         _conv_publish_map_ids(conversation_id, place_ids_for_map)
-
         LAST_PLAN[conversation_id] = {
             "place_ids": list(place_ids_for_map),
             "names": [
@@ -1279,22 +1406,27 @@ def chat():
             "ts": int(time.time()),
         }
     else:
-        # Sin CSV no publicamos pins aunque el LLM escriba generalidades
+        # no hubo <pins> válidos → no hay pins para mapa
         _conv_publish_map_ids(conversation_id, [])
 
     # --- 8) Limpieza y persistencia ligera ---
     reply_clean = _strip_pins_block(reply)
+    
+
+
+    # ⬇️ NUEVO: post-procesar visibilidad (sin avisos, negritas forzadas, compacto)
+    reply_visible = _postprocess_chat_markup(reply_clean)
 
     if current_user.is_authenticated:
         _save_conversation_snapshot(
             current_user.id,
             conversation_id,
             messages,
-            reply_clean
+            reply_visible
         )
 
     return jsonify({
-        "response": reply_clean,
+        "response": reply_visible,
         "place_ids": _conv_get(conversation_id).get("last_map_ids", []),
         "used_csv": used_csv
     })
@@ -1376,10 +1508,11 @@ def api_current_place_ids_clear():
 @app.route("/api/poi")
 def api_poi():
     """
-    Devuelve POIs dentro de un bbox. Modo compacto disponible:
+    Devuelve POIs dentro de un bbox o una lista filtrada por place_ids/ids.
+    Modo compacto:
       - ids_only=1   ó  fields=place_ids  -> devuelve solo place_ids únicos.
-    Filtros opcionales: ids, place_ids (forzados desde todo el df).
-    Extra opcional: conversation_id, user_lat/lon, near=1, radius_km, prefer_open.
+    NUEVO:
+      - strict=1     -> si hay place_ids/ids forzados, devuelve **solo esos** y en ese orden.
     """
     try:
         south = float(request.args.get("south"))
@@ -1387,7 +1520,8 @@ def api_poi():
         north = float(request.args.get("north"))
         east = float(request.args.get("east"))
     except (TypeError, ValueError):
-        return jsonify({"error": "parámetros bbox requeridos: south,west,north,east"}), 400
+        # bbox opcional si vienes con place_ids + strict=1; no bloquees el flujo
+        south = west = north = east = None
 
     zoom = int(request.args.get("zoom", 12))
     limit = int(request.args.get("limit", 1200 if zoom >= 13 else 700))
@@ -1401,82 +1535,42 @@ def api_poi():
     prefer_open = str(request.args.get("prefer_open", "")).lower() in {"1","true","yes"}
     near = str(request.args.get("near", "")).lower() in {"1","true","yes"}
     radius_km = float(request.args.get("radius_km", 1.5))
+    strict = str(request.args.get("strict", "")).lower() in {"1","true","yes"}
 
     # Filtros forzados
     ids_raw = (request.args.get("ids") or "").strip()
     pids_raw = (request.args.get("place_ids") or "").strip()
-    filter_ids = {x.strip() for x in ids_raw.split(",") if x.strip()}
-    filter_pids = {x.strip() for x in pids_raw.split(",") if x.strip()}
+    filter_ids = [x.strip() for x in ids_raw.split(",") if x.strip()]
+    filter_pids = [x.strip() for x in pids_raw.split(",") if x.strip()]
 
     LAT, LON = "LATITUD_TUI", "LONGITUD_TUI"
     if LAT not in df.columns or LON not in df.columns:
         return jsonify([])
 
-    # 1) BBOX
-    bbox_df = df[df[LAT].between(south, north) & df[LON].between(west, east)].copy()
-    
-
-    # 2) Forzados desde todo el df
-    forced = pd.DataFrame()
-    if filter_ids and "ID" in df.columns:
-        forced = pd.concat([forced, df[df["ID"].astype(str).isin(filter_ids)]], ignore_index=True)
-    if filter_pids and "PLACE_ID" in df.columns:
-        forced = pd.concat([forced, df[df["PLACE_ID"].astype(str).isin(filter_pids)]], ignore_index=True)
-
-    if not forced.empty:
-        dedup_keys = [k for k in ["PLACE_ID", "ID", LAT, LON] if k in forced.columns]
-        forced = forced.drop_duplicates(subset=dedup_keys, keep="first")
-
-    # 3) Resto ordenado por rating (desempate) + limit
-    others = bbox_df.copy()
-    if not forced.empty:
-        mask_excl = pd.Series(True, index=others.index)
-        if "ID" in others.columns and "ID" in forced.columns:
-            mask_excl &= ~others["ID"].astype(str).isin(set(forced["ID"].astype(str)))
-        if "PLACE_ID" in others.columns and "PLACE_ID" in forced.columns:
-            mask_excl &= ~others["PLACE_ID"].astype(str).isin(set(forced["PLACE_ID"].astype(str)))
-        others = others[mask_excl]
-
-    if "_RATING" in others.columns:
-        others["_R_REV"] = pd.to_numeric(others.get("TOTAL_VALORACIONES_TUI"), errors="coerce").fillna(0)
-        others = others.sort_values(by=["_RATING", "_R_REV"], ascending=[False, False])
-
-    if len(others) > limit:
-        others = others.head(limit)
-
-    # Proximidad / abiertos ahora / rerank conversación
-    if user_lat is not None and user_lon is not None:
-        others = _sort_by_distance(others, user_lat, user_lon)
-        if near:
-            others = _filter_by_radius_km(others, user_lat, user_lon, radius_km=radius_km)
-
-    if prefer_open:
-        now_dt = datetime.now(MAD_TZ)
-        others = _aplica_filtros(others, "abiertos ahora", now_dt=now_dt)
-
-    others = _boost_recent_by_conv(others, conversation_id, boost=0.6)
-
-    # 4) Resultado
-    result = pd.concat([forced, others], ignore_index=True)
-    dedup_keys = [k for k in ["PLACE_ID", "ID", "NOMBRE_TUI", LAT, LON] if k in result.columns]
-    if dedup_keys:
-        result = result.drop_duplicates(subset=dedup_keys, keep="first")
-
+    # 0) Helper local: conversión fila → objeto
     def row_to_obj(r: pd.Series) -> Dict[str, Any]:
         def as_list(s: Any) -> List[str]:
             return [x.strip() for x in str(s or "").split(",") if x.strip()]
-
+    
+        # rating seguro
+        rv = r.get("_RATING")
+        rating = float(rv) if pd.notna(rv) else None
+    
+        # reviews seguras
+        tv = r.get("TOTAL_VALORACIONES_TUI")
+        total_reviews = int(tv) if pd.notna(tv) else None
+    
         rid = r.get("ID")
         if pd.isna(rid):
-            rid = abs(hash((r.get("NOMBRE_TUI", ""), r.get(LAT), r.get(LON)))) % (2**31)
-
+            rid = abs(hash((r.get("NOMBRE_TUI", ""), r.get("LATITUD_TUI"), r.get("LONGITUD_TUI")))) % (2**31)
+    
         return {
             "id": int(rid),
             "place_id": str(r.get("PLACE_ID", "") or ""),
             "name": r.get("NOMBRE_TUI", ""),
             "description": r.get("DESCRIPCION_TUI", ""),
-            "lat": float(r[LAT]),
-            "lon": float(r[LON]),
+            "lat": float(r["LATITUD_TUI"]),
+            "lon": float(r["LONGITUD_TUI"]),
             "address": r.get("DIRECCION", "") or r.get("DIRECCION_TUI", ""),
             "categories": [r.get("CATEGORIA_TUI", "")],
             "subcategories": as_list(r.get("TIPOS_TUI", "")),
@@ -1489,26 +1583,87 @@ def api_poi():
             "estado_negocio": r.get("ESTADO_NEGOCIO", ""),
             "reserva_posible": r.get("RESERVA_POSIBLE", ""),
             "accesibilidad_silla_ruedas": r.get("ACCESIBILIDAD_SILLA_RUEDAS", ""),
-            "rating": r.get("_RATING", None),
-            "total_reviews": (
-                int(r["TOTAL_VALORACIONES_TUI"]) if pd.notna(r.get("TOTAL_VALORACIONES_TUI")) else None
-            ),
+            "rating": rating,                 # ← ahora None si no hay
+            "total_reviews": total_reviews,   # ← ahora None si no hay
         }
 
-    objects = [row_to_obj(r) for _, r in result.iterrows()]
 
-    # Modo compacto para el mapa
+    # 1) Forzados desde todo el df
+    forced = pd.DataFrame()
+    if filter_ids and "ID" in df.columns:
+        forced = pd.concat([forced, df[df["ID"].astype(str).isin(set(filter_ids))]], ignore_index=True)
+    if filter_pids and "PLACE_ID" in df.columns:
+        forced = pd.concat([forced, df[df["PLACE_ID"].astype(str).isin(set(filter_pids))]], ignore_index=True)
+    if not forced.empty:
+        dedup_keys = [k for k in ["PLACE_ID", "ID", LAT, LON] if k in forced.columns]
+        forced = forced.drop_duplicates(subset=dedup_keys, keep="first")
+
+    # 2) Modo estricto: devolver SOLO los forzados y en ese orden
+    if strict:
+        if forced.empty:
+            return jsonify([])  # si piden estricto y no hay match, nada
+        # Reordenar según el orden proporcionado
+        if filter_pids and "PLACE_ID" in forced.columns:
+            order = {pid: i for i, pid in enumerate(filter_pids)}
+            forced["_ord"] = forced["PLACE_ID"].astype(str).map(lambda x: order.get(x, 10**9))
+        elif filter_ids and "ID" in forced.columns:
+            order = {iid: i for i, iid in enumerate(filter_ids)}
+            forced["_ord"] = forced["ID"].astype(str).map(lambda x: order.get(x, 10**9))
+        else:
+            forced["_ord"] = 0
+        result = forced.sort_values("_ord").drop(columns=["_ord"], errors="ignore")
+        objects = [row_to_obj(r) for _, r in result.iterrows()]
+        if want_place_ids_only:
+            pid_list = [(o.get("place_id") or "").strip() for o in objects if (o.get("place_id") or "").strip()]
+            return jsonify({"place_ids": list(dict.fromkeys(pid_list))})
+        return jsonify(objects)
+
+    # 3) BBOX (solo si no es estricto)
+    if None in (south, west, north, east):
+        return jsonify([])  # sin bbox ni strict → nada
+    bbox_df = df[df[LAT].between(south, north) & df[LON].between(west, east)].copy()
+
+    # 4) Excluir forzados del resto
+    others = bbox_df.copy()
+    if not forced.empty:
+        mask_excl = pd.Series(True, index=others.index)
+        if "ID" in others.columns and "ID" in forced.columns:
+            mask_excl &= ~others["ID"].astype(str).isin(set(forced["ID"].astype(str)))
+        if "PLACE_ID" in others.columns and "PLACE_ID" in forced.columns:
+            mask_excl &= ~others["PLACE_ID"].astype(str).isin(set(forced["PLACE_ID"].astype(str)))
+        others = others[mask_excl]
+
+    # 5) Orden + limit + filtros
+    if "_RATING" in others.columns:
+        others["_R_REV"] = pd.to_numeric(others.get("TOTAL_VALORACIONES_TUI"), errors="coerce").fillna(0)
+        others = others.sort_values(by=["_RATING", "_R_REV"], ascending=[False, False])
+    if len(others) > limit:
+        others = others.head(limit)
+
+    if user_lat is not None and user_lon is not None:
+        others = _sort_by_distance(others, user_lat, user_lon)
+        if near:
+            others = _filter_by_radius_km(others, user_lat, user_lon, radius_km=radius_km)
+
+    if prefer_open:
+        now_dt = datetime.now(MAD_TZ)
+        others = _aplica_filtros(others, "abiertos ahora", now_dt=now_dt)
+
+    others = _boost_recent_by_conv(others, conversation_id, boost=0.6)
+
+    # 6) Resultado combinado (no estricto)
+    result = pd.concat([forced, others], ignore_index=True)
+    dedup_keys = [k for k in ["PLACE_ID", "ID", "NOMBRE_TUI", LAT, LON] if k in result.columns]
+    if dedup_keys:
+        result = result.drop_duplicates(subset=dedup_keys, keep="first")
+
+    objects = [row_to_obj(r) for _, r in result.iterrows()]
     if want_place_ids_only:
-        pid_list: List[str] = []
-        for o in objects:
-            pid = (o.get("place_id") or "").strip()
-            if pid:
-                pid_list.append(pid)
-        # Únicos preservando orden
+        pid_list = [(o.get("place_id") or "").strip() for o in objects if (o.get("place_id") or "").strip()]
         pid_list = list(dict.fromkeys(pid_list))
         return jsonify({"place_ids": pid_list})
-
     return jsonify(objects)
+
 
 
 @app.route("/api/lookup_place_ids", methods=["GET"])
@@ -1556,8 +1711,6 @@ def api_conversation_place_ids(conversation_id: str):
     except Exception:
         names = []
     return jsonify({"place_ids": place_ids, "names": names, "ts": st.get("ts", 0)})
-
-
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
@@ -1663,6 +1816,11 @@ def toggle_favorite():
         return jsonify({"ok": True, "favorite": True, "tui_id": place.id, "place_id": place.place_id or ""})
 
 
+
+@app.route("/coords")
+def coords():
+    # devuelve {} si no tienes coords del servidor
+    return jsonify({})
 # ======================
 # Main
 # ======================
@@ -1674,3 +1832,5 @@ def toggle_favorite():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
+
+
