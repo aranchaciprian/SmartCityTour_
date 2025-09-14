@@ -39,8 +39,8 @@
 <body>
     
     
-<!-- CARGA EL JS GLOBAL DE FAVORITOS (debe existir en /static/js/favorites.js) -->
-<script src="/static/js/favorites.js"></script>
+<!-- CARGA EL JS GLOBAL DE FAVORITOS (debe existir en /static/favorites/favorites.js) -->
+<script src="/static/favorites/favorites.js"></script>
 
 <style>
 #filter-panel { position:relative; width:300px; max-height:85vh; font-family:sans-serif; z-index:5000; }
@@ -83,7 +83,7 @@
 <script id="filters-json" type="application/json">{"acc_silla": ["NO", "SI"], "precio": ["Barato", "Caro", "Moderado", "Muy caro", "No Disponible"], "estado": ["Abierto", "Cerrado temporalmente", "—"], "reserva": ["NO", "SI"]}</script>
 
 <script>
-/* ======= Fallback por si no está cargado static/js/favorites.js ======= */
+/* ======= Fallback por si no está cargado static/favorites/favorites.js ======= */
 if (typeof window.toggleFavoriteById !== "function") {
   window.toggleFavoriteById = async function(arg){
     // arg puede ser Number (tui_id) o un objeto {tui_id, place_id?, name?, lat?, lon?}

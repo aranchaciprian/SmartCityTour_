@@ -155,7 +155,7 @@
       }
     }
   </style>
-  <link rel="stylesheet" href="{{ url_for('static', filename='weather.css') }}?v={{ build_version }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='weather/weather.css') }}?v={{ build_version }}">
 </head>
 <body>
 
@@ -291,7 +291,7 @@
   </script>
 
   <!-- JS del tiempo -->
-  <script defer src="{{ url_for('static', filename='weather.js') }}?v={{ build_version }}"></script>
+  <script defer src="{{ url_for('static', filename='weather/weather.js') }}?v={{ build_version }}"></script>
 
 </body>
 </html>
