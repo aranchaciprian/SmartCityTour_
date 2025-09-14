@@ -1,8 +1,8 @@
 /* Widget tiempo (esquina inferior izquierda) */
 .wx {
   position: fixed;
-  left: 12px;
-  bottom: 12px;
+  left: 24px;
+  bottom: 24px;
   z-index: 1000; /* por debajo del launcher del chat (100001), y por encima del mapa */
   display: flex;
   flex-direction: column-reverse; /* botón abajo, panel se abre hacia arriba */
@@ -10,23 +10,58 @@
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Noto Sans', Arial, sans-serif;
 }
 
-.wx-btn {
-  display: flex; align-items: center; gap: 6px;
-  padding: 8px 10px; border-radius: 999px;
-  border: 1px solid rgba(0,0,0,.08);
-  background: rgba(255,255,255,.9);
-  backdrop-filter: blur(6px);
-  cursor: pointer; font-weight: 600;
+.wx-btn{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  /* tamaño mayor, forma píldora */
+  padding: 12px 18px;
+  min-width: 64px;
+  height: 48px;
+
+  font-size: 18px;
+  font-weight: 700;
+  border-radius: 999px;
+
+  /* ▶︎ MÁS CONTRASTE */
+  border: 1px solid rgba(0,0,0,.35);          /* antes .08 */
+  background: linear-gradient(#ffffff, #f3f3f3); /* más “corte” que blanco plano */
+  color: #111;
+
+  backdrop-filter: blur(6px) saturate(1.05);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.9) inset,      /* brillo fino arriba */
+    0 10px 30px rgba(0,0,0,.25);             /* sombra exterior más profunda */
+
+  cursor: pointer;
 }
 .wx-btn:hover { background: white; }
-#wx-badge { font-variant-numeric: tabular-nums; }
+.wx-btn:focus-visible{
+  outline: 2px solid rgba(0,0,0,.55);
+  outline-offset: 2px;
+}
+
+#wx-badge { 
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  line-height: 1;
+  color: #111;
+}
+
+#wx-emoji {
+  font-size: 18px;
+  line-height: 1;
+  color: #111;
+}
 
 .wx-panel {
   margin-bottom: 8px; /* se separa del botón (apertura hacia arriba) */
   width: 280px; border-radius: 12px;
-  border: 1px solid rgba(0,0,0,.08);
-  background: rgba(255,255,255,.96);
-  box-shadow: 0 10px 30px rgba(0,0,0,.15);
+  border: 1px solid rgba(0,0,0,.16);
+  background: rgba(255,255,255,.98);
+  box-shadow: 0 12px 32px rgba(0,0,0,.28);
   padding: 10px;
 }
 .wx-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
@@ -42,5 +77,13 @@
 
 @media (max-width: 640px) {
   .wx { left: 8px; bottom: 8px; }
+
+  .wx-btn{
+    padding: 10px 16px;
+    min-width: 56px;
+    height: 44px;
+    font-size: 16px;
+  }
+
   .wx-panel { width: min(92vw, 320px); }
 }
