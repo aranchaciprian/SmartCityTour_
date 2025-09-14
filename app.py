@@ -21,7 +21,7 @@ import re
 import time
 import unicodedata
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from math import radians, sin, cos, asin, sqrt
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import threading
@@ -139,6 +139,98 @@ def inject_build_version():
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5")
+
+
+
+# ======================
+# Tiempo (Open‑Meteo)
+# ======================
+
+# Coordenadas de Madrid (centro)
+WEATHER_DEFAULT_COORDS = (40.4168, -3.7038)
+
+# TTL de caché en segundos (env var opcional en Render: WEATHER_CACHE_TTL)
+WEATHER_CACHE_TTL = int(os.getenv("WEATHER_CACHE_TTL", "300"))
+
+# Caché simple en memoria (por (lat, lon))
+_weather_cache = {"key": None, "expires": datetime.min, "payload": None}
+
+# Mapeo de códigos WMO a texto/emoji (resumen)
+WMO_CODE_ES = {
+    0: ("Despejado", "☀️"),
+    1: ("Prácticamente despejado", "🌤️"),
+    2: ("Parcialmente nublado", "⛅"),
+    3: ("Nublado", "☁️"),
+    45: ("Niebla", "🌫️"), 48: ("Niebla escarchada", "🌫️"),
+    51: ("Llovizna débil", "🌦️"), 53: ("Llovizna", "🌦️"), 55: ("Llovizna intensa", "🌧️"),
+    56: ("Llovizna helada débil", "🌧️"), 57: ("Llovizna helada fuerte", "🌧️"),
+    61: ("Lluvia débil", "🌦️"), 63: ("Lluvia", "🌧️"), 65: ("Lluvia fuerte", "🌧️"),
+    66: ("Lluvia helada débil", "🌧️"), 67: ("Lluvia helada fuerte", "🌧️"),
+    71: ("Nieve débil", "🌨️"), 73: ("Nieve", "🌨️"), 75: ("Nieve intensa", "❄️"),
+    77: ("Granizo fino", "❄️"),
+    80: ("Chubascos débiles", "🌦️"), 81: ("Chubascos", "🌧️"), 82: ("Chubascos fuertes", "🌧️"),
+    85: ("Aguanieve débil", "🌨️"), 86: ("Aguanieve fuerte", "🌨️"),
+    95: ("Tormenta", "⛈️"), 96: ("Tormenta con granizo", "⛈️"), 99: ("Tormenta fuerte con granizo", "⛈️"),
+}
+
+def _fetch_open_meteo(lat: float, lon: float, days: int = 5) -> dict:
+    """
+    Llama a Open‑Meteo para obtener tiempo actual + predicción diaria.
+    - Doc: /v1/forecast con `current`, `daily`, `forecast_days`, `timezone=auto`
+    """
+    if requests is None:
+        raise RuntimeError("Falta la dependencia 'requests' (añádela a requirements.txt)")
+
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current": "temperature_2m,weather_code",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min",
+        "timezone": "auto",
+        "forecast_days": days,
+    }
+    r = requests.get(url, params=params, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def _normalize_weather(payload: dict) -> dict:
+    """Convierte la respuesta de Open‑Meteo en un JSON compacto para el frontend."""
+    cur = payload.get("current", {}) or {}
+    daily = payload.get("daily", {}) or {}
+
+    current_code = int(cur.get("weather_code", 0))
+    current_desc, current_emoji = WMO_CODE_ES.get(current_code, ("", ""))
+
+    days = []
+    times = daily.get("time", []) or []
+    codes = daily.get("weather_code", []) or []
+    tmaxs = daily.get("temperature_2m_max", []) or []
+    tmins = daily.get("temperature_2m_min", []) or []
+
+    for i, d in enumerate(times):
+        code = int(codes[i])
+        desc, emoji = WMO_CODE_ES.get(code, ("", ""))
+        days.append({
+            "date": d,
+            "code": code,
+            "desc": desc,
+            "emoji": emoji,
+            "tmax": tmaxs[i],
+            "tmin": tmins[i],
+        })
+
+    return {
+        "current": {
+            "temp": cur.get("temperature_2m"),
+            "code": current_code,
+            "desc": current_desc,
+            "emoji": current_emoji,
+        },
+        "daily": days,
+    }
+
+
 
 # ======================
 # Utilidades: texto / fuzzy
@@ -1821,6 +1913,47 @@ def toggle_favorite():
 def coords():
     # devuelve {} si no tienes coords del servidor
     return jsonify({})
+
+
+# --- API: Tiempo actual + próximos días ---
+@app.route("/api/weather")
+def api_weather():
+    """Devuelve JSON con tiempo actual y 5 días de predicción."""
+    # lat/lon opcionales por querystring; por defecto, centro de Madrid
+    try:
+        lat = float((request.args.get("lat") or WEATHER_DEFAULT_COORDS[0]))
+        lon = float((request.args.get("lon") or WEATHER_DEFAULT_COORDS[1]))
+    except Exception:
+        lat, lon = WEATHER_DEFAULT_COORDS
+
+    # Días opcionales (?days=3..16); por defecto 5
+    try:
+        days = int(request.args.get("days") or 5)
+        if days < 1: days = 1
+        if days > 16: days = 16
+    except Exception:
+        days = 5
+
+    # Caché por clave "lat,lon,days"
+    key = f"{round(lat,4)},{round(lon,4)},{days}"
+    now = datetime.utcnow()
+    if _weather_cache["key"] == key and now < _weather_cache["expires"]:
+        return jsonify({"ok": True, "data": _weather_cache["payload"]})
+
+    try:
+        raw = _fetch_open_meteo(lat, lon, days=days)
+        data = _normalize_weather(raw)
+        _weather_cache.update({
+            "key": key,
+            "expires": now + timedelta(seconds=WEATHER_CACHE_TTL),
+            "payload": data,
+        })
+        return jsonify({"ok": True, "data": data})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 502
+
+
+
 # ======================
 # Main
 # ======================
