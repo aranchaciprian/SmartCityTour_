@@ -3,7 +3,7 @@
   position: fixed;
   left: 24px;
   bottom: 24px;
-  z-index: 1000; /* por debajo del launcher del chat (100001), y por encima del mapa */
+  z-index: 100050; /* por encima del iframe del mapa y del panel lateral */
   display: flex;
   flex-direction: column-reverse; /* botón abajo, panel se abre hacia arriba */
   align-items: flex-start;
