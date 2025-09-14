@@ -1932,7 +1932,7 @@ def api_weather():
 
     # Días opcionales (?days=3..16); por defecto 5
     try:
-        days = int(request.args.get("days") or 5)
+        days = int(request.args.get("days") or 8)
         if days < 1: days = 1
         if days > 16: days = 16
     except Exception:
