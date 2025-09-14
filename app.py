@@ -57,10 +57,14 @@ from models import db, Favorite, Tui, User, Conversation
 # Scraping opcional (horarios)
 try:
     import requests
-    from bs4 import BeautifulSoup
-except Exception:
+except ImportError:
     requests = None
+
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
     BeautifulSoup = None
+
 
 try:
     from zoneinfo import ZoneInfo  # Python 3.9+
