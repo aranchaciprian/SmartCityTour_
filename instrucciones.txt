@@ -8,6 +8,11 @@ git clone https://github.com/aranchaciprian/SmartCityTour_.git
 git clone https://github.com/aranchaciprian/SmartCityTour_
 
 
+# A continuación hay que añadir en la raíz del repo que nos hemos descargado un fichero llamado '.env'
+# que contenga la API Key para conectarse a OpenAI (en una variable llamada 'OPENAI_API_KEY'),
+# así como la URL externa para conectarse a la BBDD de Render (en una variable llamada 'DATABASE_URL')
+
+
 LUEGO MODIFICAMOS LO QUE SEA DE LA CARPETA
 cd SmartCityTour_
 git checkout -b nombre_rama
