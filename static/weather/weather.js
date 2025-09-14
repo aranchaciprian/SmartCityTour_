@@ -19,7 +19,7 @@
   const DEFAULT_LAT = 40.4168; // Madrid
   const DEFAULT_LON = -3.7038;
 
-  async function loadWeather(lat = DEFAULT_LAT, lon = DEFAULT_LON, days = 5) {
+  async function loadWeather(lat = DEFAULT_LAT, lon = DEFAULT_LON, days = 8) {
     const u = new URL('/api/weather', location.origin);
     u.searchParams.set('lat', lat);
     u.searchParams.set('lon', lon);
