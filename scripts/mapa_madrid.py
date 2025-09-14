@@ -394,8 +394,8 @@ unique_filters_json = safe_json_dump_text(unique_filters)
 
 # --- JS embebido ---
 js = """
-<!-- CARGA EL JS GLOBAL DE FAVORITOS (debe existir en /static/js/favorites.js) -->
-<script src="/static/js/favorites.js"></script>
+<!-- CARGA EL JS GLOBAL DE FAVORITOS (debe existir en /static/favorites/favorites.js) -->
+<script src="/static/favorites/favorites.js"></script>
 
 <style>
 #filter-panel { position:relative; width:300px; max-height:85vh; font-family:sans-serif; z-index:5000; }
@@ -438,7 +438,7 @@ js = """
 <script id="filters-json" type="application/json">""" + unique_filters_json + """</script>
 
 <script>
-/* ======= Fallback por si no está cargado static/js/favorites.js ======= */
+/* ======= Fallback por si no está cargado static/favorites/favorites.js ======= */
 if (typeof window.toggleFavoriteById !== "function") {
   window.toggleFavoriteById = async function(arg){
     // arg puede ser Number (tui_id) o un objeto {tui_id, place_id?, name?, lat?, lon?}
