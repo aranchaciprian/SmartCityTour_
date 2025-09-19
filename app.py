@@ -1744,12 +1744,23 @@ def get_conversation(conv_id):
 def widget():
     return render_template("chat_widget.html")
 
-
 @app.route("/health")
 def health():
     _cleanup_conv_state()
-    return jsonify({"status": "ok", "rows": int(len(df))})
-
+    issues = []
+    if not os.getenv("OPENAI_API_KEY"):
+        issues.append("OPENAI_API_KEY missing")
+    if not DEFAULT_MODEL:
+        issues.append("OPENAI_MODEL missing/empty")
+    rows = int(len(df)) if df is not None else 0
+    return jsonify({
+        "status": "ok" if not issues and rows > 0 else "degraded",
+        "rows": rows,
+        "csv_path": CSV_PATH,
+        "model": DEFAULT_MODEL,
+        "db_uri_present": bool(os.getenv("DATABASE_URL")),
+        "issues": issues
+    })
 
 # --- API: estado de selección para mapa (por conversación) ---
 @app.route("/api/current_place_ids", methods=["GET"])
