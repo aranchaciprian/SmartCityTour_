@@ -73,6 +73,19 @@
     .cta{ padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:transparent; color:var(--text); cursor:pointer; font-size:13px; }
     .cta.primary{ border-color:transparent; background:linear-gradient(135deg,var(--accent),#10b981); color:#052e16; font-weight:700; }
     .cta[disabled]{ opacity:.6; cursor:not-allowed; }
+
+    /* === Toast minimal === */
+    .toast {
+      position: fixed; right: 16px; bottom: 16px;
+      background: #111827; color: #e5e7eb; border: 1px solid var(--border);
+      padding: 10px 12px; border-radius: 10px; max-width: 360px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.35); z-index: 9999; font-size: 12.5px;
+    }
+    .toast .title { font-weight: 700; margin-bottom: 4px; }
+    .toast .hint  { color: var(--muted); margin-top: 4px; }
+    .toast.ok     { border-color: #16a34a; }
+    .toast.err    { border-color: #ef4444; }
+    .toast a      { color:#93c5fd; text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -202,12 +215,11 @@
       [useGeo, preferOpen, wheelchair, reservas, startTimeEl].forEach(el => el.disabled = !enabled);
       clearBtn.disabled = !enabled;
       exportBtn.disabled = !enabled;
-      // Botón mapa: si hay petición en curso, desactivar; si termina, lo maneja refreshShowOnMapState()
       showOnMapBtn.disabled = true;
       showOnMapBtn.setAttribute("aria-disabled", "true");
     }
     function setBusy(isBusy){
-      inFlight = isBusy;                         // sincroniza flag anti‑doble envío
+      inFlight = isBusy;
       const box = $("#chatbox");
       if (isBusy){
         setChatEnabled(false);
@@ -227,7 +239,7 @@
       bootstrapFirstMessage();
     }
 
-      async function bootstrapFirstMessage(){
+    async function bootstrapFirstMessage(){
       const payload = {
         conversation_id: conversationId,
         messages: [{ role: "user", content: "inicio" }],
@@ -240,10 +252,8 @@
       }
       setBusy(true);
       await callChat(payload);
-      // setBusy(false) se llama dentro de callChat finally
+      // setBusy(false) se hace en callChat (finally)
     }
-
- 
 
     // ===== markdown muy ligero =====
     function escapeHtml(s){ return s.replace(/[<>&]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch])); }
@@ -295,7 +305,7 @@
 
     // ===== chips =====
     $$(".chip").forEach(b => b.addEventListener("click", ()=>{
-      if (inFlight) return; // evita interacción durante petición
+      if (inFlight) return;
       input.value = b.dataset.q || "";
       input.focus();
     }));
@@ -311,7 +321,6 @@
       startTimeEl.value = "09:30";
       localStorage.removeItem("uiPrefs");
 
-      // reset de conversación
       conversationId = uuid();
       localStorage.setItem("conversation_id", conversationId);
 
@@ -361,7 +370,7 @@
 
     // ===== geolocalización =====
     let userLat = null, userLon = null;
-    let lastGeoPromptAt = 0; // anti‑spam del aviso de ubicación
+    let lastGeoPromptAt = 0;
 
     function requestGeo(){
       if (!navigator.geolocation){
@@ -390,7 +399,7 @@
     $("#use-geo").addEventListener("change", async (e)=>{
       if (inFlight) { e.preventDefault(); e.target.checked = !e.target.checked; return; }
       if (e.target.checked){
-        setBusy(true);          // bloquea mientras pedimos permiso
+        setBusy(true);
         await requestGeo();
         setBusy(false);
       } else {
@@ -403,13 +412,12 @@
       if (useGeo.checked && userLat != null && userLon != null) return true;
 
       const now = Date.now();
-      if (now - lastGeoPromptAt > 30_000) { // no repetir en <30s
+      if (now - lastGeoPromptAt > 30_000) {
         addBot("Puedo buscar **cerca de ti**. Activa “Usar mi ubicación” y acepta el permiso, luego reenvía tu mensaje. ¿Quieres activarlo ahora?");
         lastGeoPromptAt = now;
       }
 
-      // Pregunta al usuario (bloqueando UI para evitar dobles clics)
-      setBusy(true); // bloquea antes del confirm para que no puedan re-enviar
+      setBusy(true);
       const ok = confirm("Para buscar cerca de ti, necesito tu ubicación. ¿Activarla ahora?");
       if (!ok) { setBusy(false); return false; }
 
@@ -432,7 +440,47 @@
       if (id){ clearInterval(Number(id)); delete rowEl.dataset.dotsTimer; }
     }
 
-    // ===== petición al backend =====
+    // === Toaster simple ===
+    function showToast(message, {title="Aviso", kind="ok", timeout=6000} = {}){
+      const box = document.createElement("div");
+      box.className = `toast ${kind === "error" ? "err" : "ok"}`;
+      box.innerHTML = `<div class="title">${escapeHtml(title)}</div><div>${mdToHtml(String(message))}</div>`;
+      document.body.appendChild(box);
+      const id = setTimeout(()=>{ box.remove(); }, timeout);
+      box.addEventListener("click", ()=>{ clearTimeout(id); box.remove(); });
+    }
+
+    // === Render de error en el chat (burbuja clara) ===
+    function renderErrorBubble(thinkingRow, payload){
+      const bubble = thinkingRow.querySelector(".bubble");
+      const {
+        code = "UNKNOWN",
+        message = "Ha ocurrido un error.",
+        hint = "",
+        where = "",
+        request_id = "",
+        detail = null
+      } = payload || {};
+
+      const extra = [];
+      if (where) extra.push(`origen: \`${where}\``);
+      if (request_id) extra.push(`id: \`${request_id}\``);
+
+      const devBlock = detail
+        ? `<details style="margin-top:6px"><summary>Detalle técnico</summary><pre>${escapeHtml(JSON.stringify(detail, null, 2))}</pre></details>`
+        : "";
+
+      bubble.innerHTML = mdToHtml(
+`❌ **${message}**
+- Código: \`${code}\`${extra.length ? "\n- " + extra.join("\n- ") : ""}${hint ? `\n- Sugerencia: ${hint}` : ""}
+
+Si el problema persiste, comparte el **id** con el equipo técnico.${devBlock ? "\n" : ""}`
+      );
+
+      showToast(`${message}${hint ? " — " + hint : ""}`, { title:`Error (${code})`, kind:"error" });
+    }
+
+    // ===== petición al backend (con errores explícitos) =====
     async function callChat(payload){
       payload.conversation_id = conversationId;
 
@@ -445,7 +493,7 @@
 
       try{
         const controller = new AbortController();
-        const timeout = setTimeout(()=>controller.abort(), 45000);
+        const timeout = setTimeout(()=>controller.abort(), 60000);
 
         const res = await fetch("/chat", {
           method:"POST",
@@ -455,28 +503,54 @@
         });
         clearTimeout(timeout);
 
-        const lastBubble = thinking.querySelector(".bubble");
+        const bubble = thinking.querySelector(".bubble");
         stopDots(thinking);
 
+        // Intentar parsear JSON incluso en errores HTTP
+        let data = null, rawText = null;
+        try {
+          rawText = await res.text();
+          data = JSON.parse(rawText);
+        } catch {
+          data = null;
+        }
+
         if (!res.ok){
-          lastBubble.textContent = `❌ Error ${res.status}: no se pudo obtener respuesta.`;
+          if (data && data.ok === false){
+            renderErrorBubble(thinking, data);
+          } else {
+            bubble.textContent = `❌ Error ${res.status}: no se pudo obtener respuesta.`;
+            showToast(`Fallo HTTP ${res.status}`, { title:"Error de red", kind:"error" });
+          }
           return;
         }
-        const data = await res.json();
+
+        // 200 OK
+        if (data && data.ok === false){
+          renderErrorBubble(thinking, data);
+          return;
+        }
+
         if (data && data.response){
-          lastBubble.innerHTML = mdToHtml(data.response);
+          bubble.innerHTML = mdToHtml(data.response);
           chatHistory.push({ role:"assistant", content: data.response });
           saveHistory();
+          if (Array.isArray(data.place_ids)) {
+            showOnMapBtn.disabled = data.place_ids.length === 0;
+            showOnMapBtn.setAttribute("aria-disabled", String(data.place_ids.length === 0));
+          }
         } else {
-          lastBubble.textContent = "❌ Respuesta vacía del servidor.";
+          bubble.textContent = "❌ Respuesta vacía del servidor.";
+          showToast("Respuesta vacía del servidor.", { title:"Aviso", kind:"error" });
         }
       } catch(err){
-        const lastBubble = thinking.querySelector(".bubble");
+        const bubble = thinking.querySelector(".bubble");
         stopDots(thinking);
-        if (lastBubble) lastBubble.textContent = "❌ Error al contactar con el servidor.";
+        if (bubble) bubble.textContent = "❌ Error al contactar con el servidor.";
+        showToast("No se pudo contactar con el servidor (timeout, CORS o conexión).", { title:"Conectividad", kind:"error" });
         console.error(err);
       } finally {
-        setBusy(false); // siempre desbloquear aquí
+        setBusy(false);
         scrollBottom();
       }
     }
@@ -484,24 +558,22 @@
     // ===== envío normal =====
     $("#composer").addEventListener("submit", async (e)=>{
       e.preventDefault();
-      if (inFlight) return;              // evita dobles submit
+      if (inFlight) return;
       const raw = input.value.trim();
       if (!raw) return;
 
-      // activar bloqueo ya para que no puedan tocar nada mientras pedimos ubicación
-      setBusy(true);                     // bloqueo inmediato
+      setBusy(true);
 
-      // aplicar filtros sugeridos por el texto
       const { near } = applyFiltersFromText(raw);
       const canProceed = await ensureGeolocationIfNeeded(near);
-      if (!canProceed) { setBusy(false); return; }  // desbloquea si no seguimos
+      if (!canProceed) { setBusy(false); return; }
 
       const filtersSuffix = buildFilterSuffix();
       const finalText = filtersSuffix ? `${raw} ${filtersSuffix}` : raw;
 
       chatHistory.push({ role:"user", content: finalText });
       saveHistory();
-      addUser(raw + (filtersSuffix ? `  ·  filtros: ${filtersSuffix}` : ""));
+      addUser(raw + (filtersSuffix ? `  ·  filtros: ${filtersSuffix}` : "")); // mostramos texto original + filtros
       input.value = "";
       input.style.height = "auto";
 
@@ -517,7 +589,6 @@
       }
 
       await callChat(payload);
-      // setBusy(false) lo hace callChat en finally
     });
 
     // textarea auto-grow + Enter para enviar
@@ -528,7 +599,7 @@
     input.addEventListener("keydown", (e)=>{
       if (e.key === "Enter" && !e.shiftKey){
         e.preventDefault();
-        if (!inFlight) $("#composer").requestSubmit();  // respeta guard
+        if (!inFlight) $("#composer").requestSubmit();
       }
     });
 
@@ -566,7 +637,7 @@
     // ===== geolocalización inicial si ya estaba marcada =====
     window.addEventListener("load", ()=>{
       refreshShowOnMapState();
-      if (useGeo.checked) { setBusy(true); requestGeo().finally(()=>setBusy(false)); } // bloquea mientras pide
+      if (useGeo.checked) { setBusy(true); requestGeo().finally(()=>setBusy(false)); }
     });
 
     // ===== estado UI al cargar =====
