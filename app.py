@@ -270,7 +270,8 @@ def _save_conversation_snapshot(user_id: int, conversation_id: str, messages: li
     con el snapshot completo de messages + la última reply del asistente.
     """
     if not conversation_id:
-        conversation_id = "default"  # respaldo si el front no envía nada
+    # Si llega vacío es un error de flujo; no guardamos para no mezclar hilos
+        return
 
     try:
         conv = Conversation.query.filter_by(
@@ -968,23 +969,35 @@ def _boost_recent_by_conv(df_in: pd.DataFrame, conversation_id: str, boost: floa
 LAST_PLAN: Dict[str, Dict[str, Any]] = {}
 
 # Estado por conversación
+# Estado concurrente por conversación Y usuario/sesión
 CONV_STATE: Dict[str, Dict[str, Any]] = {}
 CONV_LOCK = threading.Lock()
 
+def _conv_key(conv_id: str) -> str:
+    conv = (conv_id or "default").strip()
+    try:
+        if current_user and current_user.is_authenticated:
+            uid = f"user:{current_user.id}"
+        else:
+            sid = request.cookies.get("session", "") or request.remote_addr or "anon"
+            uid = f"anon:{sid}"
+    except Exception:
+        uid = "anon:unknown"
+    return f"{uid}::{conv}"
+
 def _conv_get(conv_id: str) -> Dict[str, Any]:
-    if not conv_id:
-        conv_id = ""
+    key = _conv_key(conv_id)
     with CONV_LOCK:
-        st = CONV_STATE.get(conv_id)
+        st = CONV_STATE.get(key)
         if not st:
             st = {
-                "place_ids_recent": deque(maxlen=60),  # últimos ids vistos en esa conversación
+                "place_ids_recent": deque(maxlen=60),
                 "last_map_ids": [],
                 "last_catalog": [],
                 "last_intent": None,
                 "ts": int(time.time()),
             }
-            CONV_STATE[conv_id] = st
+            CONV_STATE[key] = st
         return st
 
 def _conv_update_last_intent(conv_id: str, intent: str) -> None:
@@ -1006,7 +1019,6 @@ def _ordered_unique(seq: Iterable[str]) -> List[str]:
     return out
 
 def _conv_publish_map_ids(conv_id: str, place_ids: Iterable[str]) -> None:
-    """Publica ids 'actuales' para el mapa de ESTA conversación y acumula en el buffer reciente."""
     st = _conv_get(conv_id)
     clean_ids = [str(x).strip() for x in (place_ids or []) if str(x).strip()]
     clean_ids = _ordered_unique(clean_ids)
@@ -1021,9 +1033,7 @@ def _conv_recent_ids(conv_id: str) -> List[str]:
     with CONV_LOCK:
         return list(dict.fromkeys(list(st["place_ids_recent"])))
 
-
 def _conv_set_catalog(conv_id: str, rows: List[Dict[str, Any]]) -> None:
-    """Guarda el catálogo del último output (sirve para follow-ups)."""
     st = _conv_get(conv_id)
     items = []
     for i, r in enumerate(rows, start=1):
@@ -1054,6 +1064,7 @@ def _cleanup_conv_state(ttl_seconds: int = 2 * 24 * 3600):
         expired = [cid for cid, st in CONV_STATE.items() if now_ts - st.get("ts", now_ts) > ttl_seconds]
         for cid in expired:
             CONV_STATE.pop(cid, None)
+
 
 
 # === NUEVO: helpers de memoria conversacional para el LLM ===
@@ -1398,6 +1409,11 @@ def chat():
     # 2) Preparación de contexto
     try:
         conversation_id = (data.get("conversation_id") or data.get("conv_id") or "").strip()
+        new_conv = False
+        if not conversation_id:
+            conversation_id = str(uuid.uuid4())
+            new_conv = True
+
         user_latest = [m["content"] for m in messages if m.get("role") == "user"][-1].strip()
         if not user_latest:
             return _fail(
@@ -1685,7 +1701,9 @@ def chat():
         "ok": True,
         "response": reply_visible,
         "place_ids": _conv_get(conversation_id).get("last_map_ids", []),
-        "used_csv": used_csv
+        "used_csv": used_csv,
+        "conversation_id": conversation_id,      # ← NUEVO
+        "new_conversation": new_conv       
     })
 
 @app.route("/api/conversations", methods=["GET"])
@@ -2116,6 +2134,23 @@ def api_weather():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 502
 
+@app.route("/api/conversations/last", methods=["GET"])
+@login_required
+def last_conversation():
+    r = (Conversation.query
+         .filter_by(user_id=current_user.id)
+         .order_by(Conversation.updated_at.desc())
+         .first())
+    if not r:
+        return jsonify({"exists": False})
+    return jsonify({
+        "exists": True,
+        "conversation_id": r.conversation_id,
+        "title": r.title,
+        "updated_at": r.updated_at.isoformat(),
+        "last_user_text": r.last_user_text,
+        "last_assistant_text": getattr(r, "last_assistant_text", None),
+    })
 
 
 # ======================

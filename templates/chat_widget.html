@@ -139,9 +139,6 @@
     </main>
   </div>
 
-  <!-- (opcional) si usas Flask/Jinja, inyecta el nombre del usuario autenticado así: -->
-  <!-- <script>window.APP_USER_NAME = "{{ current_user.username|e }}";</script> -->
-
   <script>
     // ===== helpers DOM =====
     const $  = (q, node=document) => node.querySelector(q);
@@ -161,53 +158,8 @@
     const clearBtn    = $("#clear");
     const exportBtn   = $("#export");
 
-    // control de concurrencia (evita dobles envíos)
+    // ===== estado & concurrencia =====
     let inFlight = false;
-
-    // ===== conversation_id persistente =====
-    function uuid(){ return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-      (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-    );}
-    let conversationId = localStorage.getItem("conversation_id");
-    if (!conversationId) {
-      conversationId = uuid();
-      localStorage.setItem("conversation_id", conversationId);
-    }
-
-    // ===== fecha/hora cabecera =====
-    function setToday(){
-      const d = new Date();
-      const fmt = new Intl.DateTimeFormat("es-ES",{ dateStyle:"full", timeStyle:"short" });
-      todayBox.textContent = fmt.format(d);
-    }
-    setToday(); setInterval(setToday, 60_000);
-
-    // ===== almacenamiento =====
-    const MAX_HISTORY = 24;
-    let chatHistory = [];
-    try { chatHistory = JSON.parse(localStorage.getItem("chatHistory") || "[]"); } catch { chatHistory = []; }
-
-    function saveHistory(){
-      if (chatHistory.length > MAX_HISTORY) chatHistory = chatHistory.slice(-MAX_HISTORY);
-      localStorage.setItem("chatHistory", JSON.stringify(chatHistory));
-    }
-
-    // preferencias simples (solo filtros y hora de inicio)
-    const prefs = JSON.parse(localStorage.getItem("uiPrefs") || "{}");
-    ["use-geo","prefer-open","wheelchair","reservas"].forEach(id=>{
-      if (id in prefs) $(`#${id}`).checked = !!prefs[id];
-      $(`#${id}`).addEventListener("change", ()=>{
-        prefs[id] = $(`#${id}`).checked;
-        localStorage.setItem("uiPrefs", JSON.stringify(prefs));
-      });
-    });
-    if (prefs.startTime) startTimeEl.value = prefs.startTime;
-    startTimeEl.addEventListener("change", ()=>{
-      prefs.startTime = startTimeEl.value;
-      localStorage.setItem("uiPrefs", JSON.stringify(prefs));
-    });
-
-    // ===== Estado de chat activo/inactivo =====
     function setChatEnabled(enabled){
       input.disabled = !enabled;
       sendBtn.disabled = !enabled;
@@ -231,32 +183,16 @@
       }
     }
 
-    // ===== restaurar historial o pedir primer mensaje al backend =====
-    if (chatHistory.length > 0){
-      chatHistory.forEach(m => addRow(m.role === "assistant" ? "assistant" : m.role, m.content, false));
-      scrollBottom();
-    } else {
-      bootstrapFirstMessage();
+    // ===== fecha/hora cabecera =====
+    function setToday(){
+      const d = new Date();
+      const fmt = new Intl.DateTimeFormat("es-ES",{ dateStyle:"full", timeStyle:"short" });
+      todayBox.textContent = fmt.format(d);
     }
+    setToday(); setInterval(setToday, 60_000);
 
-    async function bootstrapFirstMessage(){
-      const payload = {
-        conversation_id: conversationId,
-        messages: [{ role: "user", content: "inicio" }],
-        prefer_open: preferOpen.checked,
-        bootstrap: true
-      };
-      if (useGeo.checked && userLat != null && userLon != null){
-        payload.start_lat = userLat;
-        payload.start_lon = userLon;
-      }
-      setBusy(true);
-      await callChat(payload);
-      // setBusy(false) se hace en callChat (finally)
-    }
-
-    // ===== markdown muy ligero =====
-    function escapeHtml(s){ return s.replace(/[<>&]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch])); }
+    // ===== util =====
+    function escapeHtml(s){ return String(s).replace(/[<>&]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch])); }
     function mdToHtml(md){
       md = escapeHtml(md);
       md = md.replace(/```([\s\S]*?)```/g, (m,p1)=>`<pre><code>${p1}</code></pre>`);
@@ -281,7 +217,6 @@
       md = md.replace(/\n{2,}/g, '\n\n').replace(/\n/g, '<br>');
       return md;
     }
-
     function addRow(role, text, withTime=true){
       const row = document.createElement("div");
       row.className = `row ${role === "assistant" ? "bot" : role}`;
@@ -289,7 +224,6 @@
       bubble.className = "bubble";
       bubble.innerHTML = role === "assistant" ? mdToHtml(text) : escapeHtml(text);
       row.appendChild(bubble);
-
       if (withTime){
         const meta = document.createElement("div");
         meta.className = "meta";
@@ -303,51 +237,8 @@
     function addBot(text){ addRow("assistant", text); }
     function scrollBottom(){ chatlog.scrollTop = chatlog.scrollHeight; }
 
-    // ===== chips =====
-    $$(".chip").forEach(b => b.addEventListener("click", ()=>{
-      if (inFlight) return;
-      input.value = b.dataset.q || "";
-      input.focus();
-    }));
-
-    // ===== limpiar / exportar =====
-    $("#clear").addEventListener("click", async ()=>{
-      if (inFlight) return;
-      chatHistory = [];
-      localStorage.removeItem("chatHistory");
-      chatlog.innerHTML = "";
-
-      ["use-geo","prefer-open","wheelchair","reservas"].forEach(id => { $(`#${id}`).checked = false; });
-      startTimeEl.value = "09:30";
-      localStorage.removeItem("uiPrefs");
-
-      conversationId = uuid();
-      localStorage.setItem("conversation_id", conversationId);
-
-      addBot("Conversación reiniciada. Generando una vista general…");
-      chatHistory.push({ role:"assistant", content:"Conversación reiniciada. Generando una vista general…" });
-      saveHistory();
-
-      setBusy(true);
-      await bootstrapFirstMessage();
-    });
-
-    $("#export").addEventListener("click", ()=>{
-      if (inFlight) return;
-      const blob = new Blob([JSON.stringify(chatHistory, null, 2)], { type:"application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `smart-city-tour_${new Date().toISOString().slice(0,10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      URL.revokeObjectURL(a.href);
-      a.remove();
-    });
-
-    // ===== intención & filtros por texto (backend decide plan por texto) =====
-    const INTENT = {
-      near: /\b(cerca|alrededor|por\s?aqu[ií]|a mi alrededor|cercan[oa]s)\b/i,
-    };
+    // ===== intención & filtros por texto =====
+    const INTENT = { near: /\b(cerca|alrededor|por\s?aqu[ií]|a mi alrededor|cercan[oa]s)\b/i };
     const FILTERS_RX = {
       open: /\babiert[oa]s?\s+ahora\b/i,
       accessible: /\baccesible\b|\bsilla\s+de\s+ruedas\b/i,
@@ -371,7 +262,6 @@
     // ===== geolocalización =====
     let userLat = null, userLon = null;
     let lastGeoPromptAt = 0;
-
     function requestGeo(){
       if (!navigator.geolocation){
         geoStatus.textContent = "Ubicación: no soportada";
@@ -406,26 +296,184 @@
         userLat = userLon = null; geoStatus.textContent = "Ubicación: desactivada";
       }
     });
-
     async function ensureGeolocationIfNeeded(wantsNear) {
       if (!wantsNear) return true;
       if (useGeo.checked && userLat != null && userLon != null) return true;
-
       const now = Date.now();
       if (now - lastGeoPromptAt > 30_000) {
         addBot("Puedo buscar **cerca de ti**. Activa “Usar mi ubicación” y acepta el permiso, luego reenvía tu mensaje. ¿Quieres activarlo ahora?");
         lastGeoPromptAt = now;
       }
-
       setBusy(true);
       const ok = confirm("Para buscar cerca de ti, necesito tu ubicación. ¿Activarla ahora?");
       if (!ok) { setBusy(false); return false; }
-
       useGeo.checked = true;
       const ok2 = await requestGeo();
       setBusy(false);
       return ok2 && userLat != null && userLon != null;
     }
+
+    // ===== toaster =====
+    function showToast(message, {title="Aviso", kind="ok", timeout=6000} = {}){
+      const box = document.createElement("div");
+      box.className = `toast ${kind === "error" ? "err" : "ok"}`;
+      box.innerHTML = `<div class="title">${escapeHtml(title)}</div><div>${mdToHtml(String(message))}</div>`;
+      document.body.appendChild(box);
+      const id = setTimeout(()=>{ box.remove(); }, timeout);
+      box.addEventListener("click", ()=>{ clearTimeout(id); box.remove(); });
+    }
+
+    // ===== historial local =====
+    const MAX_HISTORY = 24;
+    let chatHistory = [];
+    try { chatHistory = JSON.parse(localStorage.getItem("chatHistory") || "[]"); } catch { chatHistory = []; }
+    function saveHistory(){
+      if (chatHistory.length > MAX_HISTORY) chatHistory = chatHistory.slice(-MAX_HISTORY);
+      localStorage.setItem("chatHistory", JSON.stringify(chatHistory));
+    }
+
+    // ===== preferencias UI =====
+    const prefs = JSON.parse(localStorage.getItem("uiPrefs") || "{}");
+    ["use-geo","prefer-open","wheelchair","reservas"].forEach(id=>{
+      if (id in prefs) $(`#${id}`).checked = !!prefs[id];
+      $(`#${id}`).addEventListener("change", ()=>{
+        prefs[id] = $(`#${id}`).checked;
+        localStorage.setItem("uiPrefs", JSON.stringify(prefs));
+      });
+    });
+    if (prefs.startTime) startTimeEl.value = prefs.startTime;
+    startTimeEl.addEventListener("change", ()=>{
+      prefs.startTime = startTimeEl.value;
+      localStorage.setItem("uiPrefs", JSON.stringify(prefs));
+    });
+
+    // ===== conversation_id persistente =====
+    function uuid(){ return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+      (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+    );}
+    let conversationId = localStorage.getItem("conversation_id");
+
+    // ===== render inicial =====
+    function renderHistoryToChatlog(hist){
+      chatlog.innerHTML = "";
+      hist.forEach(m => addRow(m.role === "assistant" ? "assistant" : m.role, m.content, false));
+      scrollBottom();
+    }
+
+    // ===== bootstrap =====
+    async function bootstrapFirstMessage(){
+      const payload = {
+        conversation_id: conversationId,
+        messages: [{ role: "user", content: "inicio" }],
+        prefer_open: preferOpen.checked,
+        bootstrap: true
+      };
+      if (useGeo.checked && userLat != null && userLon != null){
+        payload.start_lat = userLat;
+        payload.start_lon = userLon;
+      }
+      setBusy(true);
+      await callChat(payload);
+    }
+
+    // ===== NUEVO: intentar restaurar última conversación del SERVIDOR =====
+    async function restoreFromServerOrLocal(){
+  try {
+    // 1) pedir última conversación del usuario (con cookie)
+    const res = await fetch("/api/conversations/last", {
+      method: "GET",
+      credentials: "include"
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+
+      // el backend actual devuelve { exists, conversation_id, ... }
+      if (data && data.exists && data.conversation_id) {
+        // sincroniza conversation_id
+        conversationId = data.conversation_id;
+        localStorage.setItem("conversation_id", conversationId);
+
+        // 2) ahora sí, pide los mensajes de esa conv concreta
+        const res2 = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+          method: "GET",
+          credentials: "include"
+        });
+
+        if (res2.ok) {
+          const conv = await res2.json();
+          if (conv && Array.isArray(conv.messages)) {
+            chatHistory = conv.messages.slice(-MAX_HISTORY);
+            saveHistory();
+            renderHistoryToChatlog(chatHistory);
+            refreshShowOnMapState();
+            return; // restaurado desde servidor ✅
+          }
+        }
+      }
+    } else if (res.status === 401) {
+      // no logueado → seguimos con localStorage
+      console.info("No autenticado, usando historial local.");
+    }
+  } catch (e) {
+    console.warn("restoreFromServerOrLocal: usando localStorage (", e,")");
+  }
+
+  // Fallback local
+  if (!conversationId){
+    conversationId = uuid();
+    localStorage.setItem("conversation_id", conversationId);
+  }
+  if (chatHistory.length > 0){
+    renderHistoryToChatlog(chatHistory);
+    scrollBottom();
+  } else {
+    await bootstrapFirstMessage();
+  }
+}
+
+
+    // ===== chips =====
+    $$(".chip").forEach(b => b.addEventListener("click", ()=>{
+      if (inFlight) return;
+      input.value = b.dataset.q || "";
+      input.focus();
+    }));
+
+    // ===== limpiar / exportar =====
+    $("#clear").addEventListener("click", async ()=>{
+      if (inFlight) return;
+      chatHistory = [];
+      localStorage.removeItem("chatHistory");
+      chatlog.innerHTML = "";
+
+      ["use-geo","prefer-open","wheelchair","reservas"].forEach(id => { $(`#${id}`).checked = false; });
+      startTimeEl.value = "09:30";
+      localStorage.removeItem("uiPrefs");
+
+      // nuevo id local; el back creará fila cuando se chatee
+      conversationId = uuid();
+      localStorage.setItem("conversation_id", conversationId);
+
+      addBot("Conversación reiniciada. Generando una vista general…");
+      chatHistory.push({ role:"assistant", content:"Conversación reiniciada. Generando una vista general…" });
+      saveHistory();
+
+      setBusy(true);
+      await bootstrapFirstMessage();
+    });
+
+    $("#export").addEventListener("click", ()=>{
+      if (inFlight) return;
+      const blob = new Blob([JSON.stringify(chatHistory, null, 2)], { type:"application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `smart-city-tour_${new Date().toISOString().slice(0,10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    });
 
     // ===== “pensando…” animado =====
     function startDots(rowEl){
@@ -440,17 +488,7 @@
       if (id){ clearInterval(Number(id)); delete rowEl.dataset.dotsTimer; }
     }
 
-    // === Toaster simple ===
-    function showToast(message, {title="Aviso", kind="ok", timeout=6000} = {}){
-      const box = document.createElement("div");
-      box.className = `toast ${kind === "error" ? "err" : "ok"}`;
-      box.innerHTML = `<div class="title">${escapeHtml(title)}</div><div>${mdToHtml(String(message))}</div>`;
-      document.body.appendChild(box);
-      const id = setTimeout(()=>{ box.remove(); }, timeout);
-      box.addEventListener("click", ()=>{ clearTimeout(id); box.remove(); });
-    }
-
-    // === Render de error en el chat (burbuja clara) ===
+    // ===== Render de error en el chat (burbuja clara) =====
     function renderErrorBubble(thinkingRow, payload){
       const bubble = thinkingRow.querySelector(".bubble");
       const {
@@ -461,29 +499,24 @@
         request_id = "",
         detail = null
       } = payload || {};
-
       const extra = [];
       if (where) extra.push(`origen: \`${where}\``);
       if (request_id) extra.push(`id: \`${request_id}\``);
-
       const devBlock = detail
         ? `<details style="margin-top:6px"><summary>Detalle técnico</summary><pre>${escapeHtml(JSON.stringify(detail, null, 2))}</pre></details>`
         : "";
-
       bubble.innerHTML = mdToHtml(
 `❌ **${message}**
 - Código: \`${code}\`${extra.length ? "\n- " + extra.join("\n- ") : ""}${hint ? `\n- Sugerencia: ${hint}` : ""}
 
 Si el problema persiste, comparte el **id** con el equipo técnico.${devBlock ? "\n" : ""}`
       );
-
       showToast(`${message}${hint ? " — " + hint : ""}`, { title:`Error (${code})`, kind:"error" });
     }
 
-    // ===== petición al backend (con errores explícitos) =====
+    // ===== petición al backend =====
     async function callChat(payload){
       payload.conversation_id = conversationId;
-
       const thinking = document.createElement("div");
       thinking.className = "row bot";
       thinking.innerHTML = `<div class="bubble">Pensando<span class="thinking">.</span></div>`;
@@ -494,7 +527,6 @@ Si el problema persiste, comparte el **id** con el equipo técnico.${devBlock ? 
       try{
         const controller = new AbortController();
         const timeout = setTimeout(()=>controller.abort(), 60000);
-
         const res = await fetch("/chat", {
           method:"POST",
           headers:{ "Content-Type":"application/json" },
@@ -506,29 +538,24 @@ Si el problema persiste, comparte el **id** con el equipo técnico.${devBlock ? 
         const bubble = thinking.querySelector(".bubble");
         stopDots(thinking);
 
-        // Intentar parsear JSON incluso en errores HTTP
         let data = null, rawText = null;
-        try {
-          rawText = await res.text();
-          data = JSON.parse(rawText);
-        } catch {
-          data = null;
-        }
+        try { rawText = await res.text(); data = JSON.parse(rawText); } catch { data = null; }
 
         if (!res.ok){
-          if (data && data.ok === false){
-            renderErrorBubble(thinking, data);
-          } else {
+          if (data && data.ok === false) renderErrorBubble(thinking, data);
+          else {
             bubble.textContent = `❌ Error ${res.status}: no se pudo obtener respuesta.`;
             showToast(`Fallo HTTP ${res.status}`, { title:"Error de red", kind:"error" });
           }
           return;
         }
 
-        // 200 OK
-        if (data && data.ok === false){
-          renderErrorBubble(thinking, data);
-          return;
+        if (data && data.ok === false){ renderErrorBubble(thinking, data); return; }
+
+        // (NUEVO) si el back nos cambiara el conversation_id, adóptalo
+        if (data && data.conversation_id && data.conversation_id !== conversationId){
+          conversationId = data.conversation_id;
+          localStorage.setItem("conversation_id", conversationId);
         }
 
         if (data && data.response){
@@ -563,7 +590,6 @@ Si el problema persiste, comparte el **id** con el equipo técnico.${devBlock ? 
       if (!raw) return;
 
       setBusy(true);
-
       const { near } = applyFiltersFromText(raw);
       const canProceed = await ensureGeolocationIfNeeded(near);
       if (!canProceed) { setBusy(false); return; }
@@ -587,20 +613,7 @@ Si el problema persiste, comparte el **id** con el equipo técnico.${devBlock ? 
         payload.start_lat = userLat;
         payload.start_lon = userLon;
       }
-
       await callChat(payload);
-    });
-
-    // textarea auto-grow + Enter para enviar
-    input.addEventListener("input", ()=>{
-      input.style.height = "auto";
-      input.style.height = Math.min(input.scrollHeight, 160) + "px";
-    });
-    input.addEventListener("keydown", (e)=>{
-      if (e.key === "Enter" && !e.shiftKey){
-        e.preventDefault();
-        if (!inFlight) $("#composer").requestSubmit();
-      }
     });
 
     // ===== Ver en mapa =====
@@ -634,13 +647,19 @@ Si el problema persiste, comparte el **id** con el equipo técnico.${devBlock ? 
       } catch {}
     }
 
-    // ===== geolocalización inicial si ya estaba marcada =====
-    window.addEventListener("load", ()=>{
-      refreshShowOnMapState();
-      if (useGeo.checked) { setBusy(true); requestGeo().finally(()=>setBusy(false)); }
+    // ===== onload =====
+    window.addEventListener("load", async ()=>{
+      setBusy(true);
+      try {
+        await restoreFromServerOrLocal();
+        if (useGeo.checked) { await requestGeo(); }
+      } finally {
+        setBusy(false);
+        refreshShowOnMapState();
+      }
     });
 
-    // ===== estado UI al cargar =====
+    // estado UI al cargar
     setBusy(false);
   </script>
 </body>
